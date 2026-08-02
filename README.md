@@ -35,122 +35,152 @@
   </a>
 </p>
 
-> ⚠️ **Test bench / Banc d'essai** — This repository is an experimental variant of
-> [`Docker-Ubuntu-18.04-Bionic`](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic),
-> adding [s6-overlay](https://github.com/just-containers/s6-overlay) as PID 1. It is **not** a
-> drop-in replacement: the security model differs (see [Security trade-off](#security-trade-off)).
-
 ---
 
 ## Overview
 
-Same **minimal, hardened, multi-arch Ubuntu 18.04 (Bionic) base** as the parent image — built
-`FROM scratch` from the **official Ubuntu OCI rootfs** — with
-[s6-overlay](https://github.com/just-containers/s6-overlay) added as a proper init system and
-process supervisor.
+A **minimal, hardened, multi-architecture Ubuntu 18.04 LTS (Bionic) base image**, built
+`FROM scratch` from the **official Ubuntu OCI rootfs**, with
+[s6-overlay](https://github.com/just-containers/s6-overlay) as its init system and process
+supervisor.
 
-> Supported architectures: **`amd64`** and **`arm64`**
+It is designed as a **foundation for your own images**: it ships an init system, a non-root user
+with runtime-configurable UID/GID, and a hardened system baseline — then gets out of your way.
 
-### What s6-overlay adds
+> **Supported architectures:** `linux/amd64`, `linux/arm64`
+> **Automatic monthly rebuilds** pick up the latest Ubuntu security patches.
 
-| Capability | Without s6 (parent image) | With s6-overlay (this image) |
+### Key features
+
+- ✅ **Built `FROM scratch`** from the official Ubuntu OCI rootfs — no third-party base layer
+- ✅ **s6-overlay as PID 1** — zombie reaping, ordered startup and shutdown, correct signal handling
+- ✅ **Runtime-configurable `PUID` / `PGID`** — applied at container start, before any service runs
+- ✅ **Multi-service supervision** with declared dependencies between services
+- ✅ **Non-root by default** — the default `CMD` drops privileges to `appuser`
+- ✅ **System hardening** — `root` account locked, SUID/SGID bits stripped, world-writable bits
+  removed, `umask 027`
+- ✅ **Supply-chain integrity** — Alpine builder pinned by digest, s6-overlay tarballs pinned by
+  SHA256 and verified before extraction, CI actions pinned by commit SHA
+- ✅ **Fail-fast init** — a failing init script stops the container instead of running on with a
+  broken state
+- ✅ **APT & dpkg optimisation** — no recommended/suggested packages, no translations, clean cache
+- ✅ **Continuously verified** — hadolint, shellcheck, 8 container integration tests, and weekly
+  Trivy scans
+
+---
+
+## How the container boots
+
+Understanding the boot sequence explains where your own code hooks in:
+
+```
+docker run
+   │
+   ├─ 1. ENTRYPOINT /init            s6-overlay takes PID 1
+   │
+   ├─ 2. s6-rc oneshots              init-adduser applies PUID/PGID
+   │        (dependency-ordered)     ← your init tasks go here
+   │
+   ├─ 3. s6-rc longruns              supervised daemons start
+   │        (dependency-ordered)     ← your services go here
+   │
+   └─ 4. CMD                         runs as a normal process
+                                     container exits when it exits
+```
+
+On shutdown (`docker stop`, or the `CMD` exiting), the sequence runs in reverse: services are
+stopped in dependency order, then remaining processes get `SIGTERM`, then `SIGKILL` after a grace
+period.
+
+---
+
+## Image reference
+
+### Registries and tags
+
+| Registry | Image | Architectures |
 |---|---|---|
-| **`PUID`/`PGID`** | Fixed at build time — values passed at runtime are **ignored** | **Actually applied at runtime**, before any service starts |
-| **PID 1 behaviour** | The `CMD` runs as PID 1 and rarely reaps zombies or handles `SIGTERM` correctly | Real init: zombie reaping, ordered startup/shutdown, correct signal handling |
-| **Multiple processes** | One `CMD` only | Any number of supervised services, with declared dependencies |
-| **Init tasks** | None | `s6-rc` oneshots run before services, in dependency order |
+| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
+| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
 
----
+Tags point at a multi-architecture manifest — Docker automatically selects the right image for
+the host platform. `YYYY.MM` tags (e.g. `2026.08`) are immutable monthly snapshots; prefer them
+for reproducible deployments, and `latest` for automatic security updates.
 
-## Security trade-off
+### Included packages
 
-This is the one thing to understand before using this image.
+| Category | Packages |
+|---|---|
+| Shell & base | `bash`, `cron`, `curl`, `gnupg`, `jq`, `netcat-openbsd`, `tzdata` |
+| System support | `apt-utils`, `ca-certificates`, `locales` |
+| Init & supervision | `s6-overlay` 3.2.3.2 (statically linked, in `/command` and `/package`) |
 
-**s6-overlay must start as `root` (PID 1)** in order to remap `PUID`/`PGID` and then drop
-privileges. This image therefore has **no `USER` directive**, unlike the parent image which ends
-with `USER appuser`.
+### Environment variables
 
-The upstream s6-overlay documentation is explicit that the privilege-changing tooling
-(`fix-attrs`, `logutil-service`) does not work under a `USER` container — dynamic `PUID`/`PGID`
-and a non-root PID 1 are mutually exclusive. **You cannot have both.**
-
-What is done to mitigate it:
-
-- The **default `CMD` drops privileges**: `docker run -it <image>` gives you an `appuser` shell,
-  not a root shell.
-- All other hardening from the parent image is kept: `root` account locked, SUID/SGID bits
-  stripped, world-writable bits removed, `umask 027`.
-- Your own services **must** drop privileges explicitly — see
-  [Writing a service](#4-writing-a-supervised-service).
-
-**If you do not need dynamic `PUID`/`PGID`**, prefer the parent image
-[`Docker-Ubuntu-18.04-Bionic`](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic):
-it runs as a non-root user end to end, which is the stronger posture.
-
----
-
-## How this differs from the LinuxServer.io base image
-
-This image takes the same broad approach as
-[`linuxserver/docker-baseimage-ubuntu`](https://github.com/linuxserver/docker-baseimage-ubuntu)
-but deliberately diverges on several points:
-
-| Point | LinuxServer.io | This image |
+| Variable | Default | Description |
 |---|---|---|
-| **Multi-arch** | `ENV ARCH=amd64` hardcoded; a separate Dockerfile per architecture | Single Dockerfile; `TARGETARCH` → s6 arch mapping resolved at build time |
-| **Download integrity** | s6 tarballs fetched with no verification | **SHA256 pinned in the Dockerfile** and verified before extraction — a tampered tarball fails the build |
-| **Runtime remote code** | `S6_STAGE2_HOOK=/docker-mods` downloads and executes scripts from the internet at container start | **Not used.** No remote code is fetched or executed at runtime |
-| **Build-time remote deps** | Helper scripts `ADD`ed from `raw.githubusercontent.com` at mutable refs (`v3`, `v1`) | Only the pinned, checksum-verified s6 release tarballs |
-| **Init failure handling** | `S6_BEHAVIOUR_IF_STAGE2_FAILS` left at default `0` — a failed init is ignored | Set to **`2`**: a failed init **stops the container** instead of running with wrong permissions |
-| **System hardening** | Not applied in the base | `root` locked, SUID/SGID stripped, world-writable bits removed, `umask 027` |
-| **Default `CMD`** | None (root by default) | Drops privileges to `appuser` |
-| **Testing** | — | CI runs **8 integration tests** against a real container on every build |
+| `PUID` | `1000` | UID applied to `appuser` at container start |
+| `PGID` | `1000` | GID applied to `appuser` at container start |
+| `HOME` | `/config` | Home directory of `appuser` |
+| `TZ` | `UTC` | Timezone |
+| `LANG` | `en_US.UTF-8` | Locale (also `LANGUAGE`, `LC_ALL`) |
+| `TERM` | `xterm` | Terminal type |
+| `DEBIAN_FRONTEND` | `noninteractive` | Suppresses interactive APT prompts |
+| `PATH` | `/command:/usr/local/sbin:…` | `/command` holds the s6 binaries |
 
----
+s6-overlay tunables set by this image:
 
-## s6 environment variables
-
-Beyond the parent image's variables, this image sets:
-
-| Variable | Value | Why |
+| Variable | Value | Effect |
 |---|---|---|
-| `S6_BEHAVIOUR_IF_STAGE2_FAILS` | `2` | Stop the container if an init script fails, rather than continuing silently |
-| `S6_CMD_WAIT_FOR_SERVICES_MAXTIME` | `0` | No maximum startup time imposed on services |
-| `S6_VERBOSITY` | `1` | Only warnings and errors |
+| `S6_BEHAVIOUR_IF_STAGE2_FAILS` | `2` | Stop the container if an init script fails |
+| `S6_CMD_WAIT_FOR_SERVICES_MAXTIME` | `0` | No startup timeout imposed on services |
+| `S6_VERBOSITY` | `1` | Log warnings and errors only |
 
-`PUID` / `PGID` (default `1000`) are now **read at container startup**, not baked in.
-The full list of s6 tunables is in the
-[upstream documentation](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour).
+Any other [s6-overlay variable](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour)
+can be set at runtime with `-e`.
+
+### Filesystem layout
+
+| Path | Purpose |
+|---|---|
+| `/config` | Home of `appuser`, mode `750`, owned by `appuser` — mount your persistent data here |
+| `/command` | s6 binaries (`s6-setuidgid`, `with-contenv`, …) |
+| `/etc/s6-overlay/s6-rc.d/` | Service definitions |
+| `/etc/s6-overlay/user-bundles.d/user/contents.d/` | Services enabled at boot |
+| `/etc/s6-overlay/scripts/` | Shell scripts called by service definitions |
 
 ---
 
-## Usage
+## Getting started
 
-### 1. Run an interactive container
+### Run a container
 
 ```bash
 docker run -it --rm ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
 ```
 
-You land in a shell as `appuser`, not `root` — the default `CMD` drops privileges.
+You get a shell as `appuser` — the default `CMD` drops privileges.
 
-### 2. Verify dynamic PUID/PGID
+### Set the user's UID/GID
+
+Match the container user to a host user so bind-mounted files have the right ownership:
 
 ```bash
-docker run --rm -e PUID=1500 -e PGID=1600 \
+docker run --rm \
+  -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v "$PWD/data:/config" \
   ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest \
   sh -c 'id appuser'
 ```
 
-```
-uid=1500(appuser) gid=1600(appuser) groups=1600(appuser)
-```
+`appuser` is remapped and `/config` is re-owned **before** any service starts. Values must be
+positive integers; anything else stops the container with an explicit error.
 
-This is the behaviour the parent image cannot provide.
+### Build your own image
 
-### 3. Installing packages in a derived image
-
-Package installation still happens **at build time, as `root`** — same as the parent image:
+Package installation happens at build time, as `root`:
 
 ```dockerfile
 FROM ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
@@ -160,41 +190,137 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 ```
 
-No `USER root` is needed here — this image already builds as root.
+> **Do not install packages at container start** (e.g. an `apt-get install` in `command:`).
+> Services run unprivileged, so APT will fail with `Permission denied` on `/var/lib/apt/lists`.
+> Install at build time.
 
-### 4. Writing a supervised service
+---
 
-Create an `s6-rc` service definition. NGINX is used as the example:
+## Adding your own services
 
-`root/etc/s6-overlay/s6-rc.d/nginx/type`:
+Service definitions live under `/etc/s6-overlay/s6-rc.d/`. Keep them in a `root/` directory in
+your build context and copy the whole tree in — that is the convention this image itself uses.
+
+### A one-shot init task
+
+Runs once at startup, before services. Useful for generating configuration or fixing permissions.
+
+`root/etc/s6-overlay/s6-rc.d/init-myapp/type`
+```
+oneshot
+```
+
+`root/etc/s6-overlay/s6-rc.d/init-myapp/up`
+```
+/etc/s6-overlay/scripts/init-myapp
+```
+
+`root/etc/s6-overlay/s6-rc.d/init-myapp/dependencies.d/init-adduser` — *empty file.*
+Guarantees `PUID`/`PGID` are already applied when your task runs.
+
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/init-myapp` — *empty file.*
+Enables the task at boot.
+
+`root/etc/s6-overlay/scripts/init-myapp` — *must be executable.*
+```sh
+#!/command/with-contenv sh
+set -eu
+
+# Write logs to stderr: stdout belongs to the CMD.
+echo "[init-myapp] preparing directories" >&2
+
+mkdir -p /config/myapp
+chown appuser:appuser /config/myapp
+```
+
+> The `up` file is **not** a shell script — it is a single
+> [execline](https://skarnet.org/software/execline/) command line. Always delegate real logic to
+> a separate script, as above.
+
+### A supervised daemon
+
+`root/etc/s6-overlay/s6-rc.d/myapp/type`
 ```
 longrun
 ```
 
-`root/etc/s6-overlay/s6-rc.d/nginx/run`:
+`root/etc/s6-overlay/s6-rc.d/myapp/run` — *must be executable.*
 ```sh
 #!/command/with-contenv sh
 exec 2>&1
-# Drop privileges: the supervisor runs as root, the service must not.
+# The supervisor runs as root; the daemon must not.
+exec s6-setuidgid appuser /usr/bin/myapp --foreground
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp/dependencies.d/init-adduser` — *empty file.*
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/myapp` — *empty file.*
+
+Two rules that matter:
+
+- **The daemon must stay in the foreground.** A process that forks into the background looks like
+  a crash to the supervisor and will be restarted in a loop.
+- **Drop privileges with `s6-setuidgid`.** Everything under `s6-rc.d` starts as `root`.
+
+### Wiring it into your Dockerfile
+
+```dockerfile
+COPY root/ /
+RUN chmod 755 /etc/s6-overlay/scripts/* \
+              /etc/s6-overlay/s6-rc.d/myapp/run
+```
+
+The `chmod` matters if your files come from a checkout that dropped the executable bit (a ZIP
+download, or Git on Windows).
+
+---
+
+## Complete example: NGINX
+
+A working service, running unprivileged. Note that an unprivileged process cannot bind ports
+below 1024, so NGINX listens on `8080`.
+
+`Dockerfile`
+```dockerfile
+FROM ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends nginx && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Listen on an unprivileged port (IPv4 and IPv6 lines both end in
+    # "80 default_server;", so only that suffix is replaced).
+    sed -i 's/80 default_server;/8080 default_server;/g' /etc/nginx/sites-enabled/default && \
+    # The "user" directive only applies when the master runs as root.
+    sed -i '/^user /d' /etc/nginx/nginx.conf && \
+    # /run is not writable by appuser.
+    sed -i 's#pid /run/nginx.pid;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf && \
+    # Send logs to the container's stdout/stderr.
+    ln -sf /dev/stdout /var/log/nginx/access.log && \
+    ln -sf /dev/stderr /var/log/nginx/error.log && \
+    # Cache and temp directories must be writable by appuser.
+    chown -R appuser:appuser /var/lib/nginx
+
+COPY root/ /
+RUN chmod 755 /etc/s6-overlay/s6-rc.d/nginx/run
+
+EXPOSE 8080
+```
+
+`root/etc/s6-overlay/s6-rc.d/nginx/type`
+```
+longrun
+```
+
+`root/etc/s6-overlay/s6-rc.d/nginx/run`
+```sh
+#!/command/with-contenv sh
+exec 2>&1
 exec s6-setuidgid appuser nginx -g "daemon off;"
 ```
 
-`root/etc/s6-overlay/s6-rc.d/nginx/dependencies.d/init-adduser` — empty file.
-Guarantees `PUID`/`PGID` are applied **before** NGINX starts.
+`root/etc/s6-overlay/s6-rc.d/nginx/dependencies.d/init-adduser` — *empty file.*
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/nginx` — *empty file.*
 
-`root/etc/s6-overlay/user-bundles.d/user/contents.d/nginx` — empty file.
-Registers the service so it starts at container boot.
-
-Then in your Dockerfile:
-```dockerfile
-COPY root/ /
-RUN chmod +x /etc/s6-overlay/s6-rc.d/nginx/run
-```
-
-> Note: NGINX must listen on a port ≥ 1024 (e.g. `8080`) since it no longer runs as root.
-
-### 5. Docker Compose
-
+`docker-compose.yml`
 ```yaml
 services:
   web:
@@ -211,144 +337,256 @@ services:
       PGID: 1000
 ```
 
+```bash
+mkdir -p html && echo '<h1>It works</h1>' > html/index.html
+docker compose up -d --build
+curl http://localhost:8080
+```
+
+> A bind mount **replaces** the directory's contents in the image. Mounting an empty `./html`
+> over `/var/www/html` removes NGINX's default page, and NGINX answers `403 Forbidden` because it
+> has no `index.html` to serve. Put a file there first, as above.
+
 ---
 
-## Maintaining the s6-overlay version
+## Security model
 
-The s6-overlay version **and its SHA256 checksums** are pinned in `Dockerfile-multi-arch`.
-Dependabot does **not** track them (it is not a package manifest it understands), so bumping the
-version is a manual step. The procedure is documented in
-[`CONTRIBUTING.md`](./CONTRIBUTING.md#mettre-à-jour-s6-overlay).
+The container's **PID 1 runs as `root`**: s6-overlay needs those privileges to apply `PUID`/`PGID`
+and to hand ownership over to unprivileged processes. Everything above that layer is designed to
+minimise what actually runs privileged:
+
+| Control | Implementation |
+|---|---|
+| Default `CMD` | Runs as `appuser`, not `root` |
+| `root` account | Password locked (`passwd -l`), `/root` mode `700` |
+| Login shell for `appuser` | `/usr/sbin/nologin` |
+| SUID/SGID binaries | Stripped image-wide at build time |
+| World-writable files | Write bit removed image-wide at build time |
+| Default umask | `027` |
+| `/config` | Mode `750`, owned by `appuser` |
+| Init failure | Stops the container (`S6_BEHAVIOUR_IF_STAGE2_FAILS=2`) |
+| Supply chain | Base image pinned by digest; s6 tarballs pinned by SHA256 and verified pre-extraction; CI actions pinned by commit SHA |
+
+**Your responsibility:** anything you add under `s6-rc.d` starts as `root`. Wrap every long-running
+process in `s6-setuidgid appuser` (or another unprivileged user) as shown above.
+
+Recommended runtime hardening for your deployments:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+```
+
+If you run with a **read-only root filesystem**, set `S6_READ_ONLY_ROOT=1` so s6-overlay writes
+its runtime state to `/run` instead.
+
+Vulnerability reporting is covered in [`SECURITY.md`](./SECURITY.md).
 
 ---
 
-## Tags
+## Troubleshooting
 
-| Registry | Tag | Architecture |
-|---|---|---|
-| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
-| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
-| Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
+**`E: Could not open lock file /var/lib/apt/lists/lock (13: Permission denied)`**
+APT is running unprivileged. Install packages at build time in your `Dockerfile`, not at container
+start.
 
-> Docker Hub publishing is **optional** in this repository: if the `DOCKERHUB_USERNAME` /
-> `DOCKERHUB_TOKEN` secrets are absent, that step is skipped and only GHCR is published.
+**`bind() to 0.0.0.0:80 failed (13: Permission denied)`**
+Unprivileged processes cannot bind ports below 1024. Use a port ≥ 1024 inside the container and
+remap it on the host (`-p 80:8080`).
 
-For the security baseline see [`SECURITY.md`](./SECURITY.md), and to contribute see
-[`CONTRIBUTING.md`](./CONTRIBUTING.md) and the [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
+**A service restarts endlessly**
+The process is daemonising. Force foreground mode (`nginx -g "daemon off;"`, `--foreground`,
+`-D FOREGROUND`, …).
+
+**The container stops immediately at startup**
+An init script failed — this is `S6_BEHAVIOUR_IF_STAGE2_FAILS=2` doing its job. `docker logs` will
+show the failing script's error.
+
+**`[init-adduser] PUID invalide`**
+`PUID` / `PGID` must be positive integers. Check for quoting mistakes or empty values in your
+`.env`.
+
+**Files created in a volume have the wrong owner**
+Set `PUID`/`PGID` to the host user's IDs: `-e PUID=$(id -u) -e PGID=$(id -g)`.
+
+**Init messages appear in my piped output**
+They should not — all init logging goes to stderr. Use `2>/dev/null` if you want to discard it,
+and please [open an issue](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test/issues)
+if you see otherwise.
+
+---
+
+## Maintenance
+
+- **Images are rebuilt monthly** (1st of the month, 03:00 UTC) with the latest Ubuntu security
+  updates, and can be triggered manually from the Actions tab.
+- **Vulnerabilities are scanned weekly** (Mondays, 04:00 UTC) and after every successful build,
+  with Trivy. Results go to the repository's **Security → Code scanning** tab; full JSON reports
+  are kept as build artifacts for 90 days.
+- **The s6-overlay version and its checksums are pinned** in `Dockerfile-multi-arch` and updated
+  manually — the procedure is in [`CONTRIBUTING.md`](./CONTRIBUTING.md#updating-s6-overlay).
+
+Contributions are welcome: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) and the
+[`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
 ---
 ---
 
 ## Présentation
 
-Même **base Ubuntu 18.04 (Bionic) minimale, durcie et multi-architecture** que l'image parente —
-construite `FROM scratch` à partir du **rootfs OCI officiel Ubuntu** — avec
-[s6-overlay](https://github.com/just-containers/s6-overlay) ajouté comme véritable système d'init
-et superviseur de processus.
+Une **image de base Ubuntu 18.04 LTS (Bionic) minimale, durcie et multi-architecture**, construite
+`FROM scratch` à partir du **rootfs OCI officiel d'Ubuntu**, avec
+[s6-overlay](https://github.com/just-containers/s6-overlay) comme système d'init et superviseur de
+processus.
 
-> Architectures supportées : **`amd64`** et **`arm64`**
+Elle est conçue comme une **fondation pour vos propres images** : elle fournit un système d'init,
+un utilisateur non-root dont l'UID/GID est configurable à l'exécution, et un socle système durci —
+puis vous laisse travailler.
 
-### Ce qu'apporte s6-overlay
+> **Architectures supportées :** `linux/amd64`, `linux/arm64`
+> **Reconstructions mensuelles automatiques** intégrant les derniers correctifs de sécurité Ubuntu.
 
-| Fonctionnalité | Sans s6 (image parente) | Avec s6-overlay (cette image) |
-|---|---|---|
-| **`PUID`/`PGID`** | Figés au build — les valeurs passées à l'exécution sont **ignorées** | **Réellement appliqués à l'exécution**, avant tout service |
-| **Comportement PID 1** | Le `CMD` tourne en PID 1 et gère rarement les zombies ou `SIGTERM` correctement | Véritable init : nettoyage des zombies, démarrage/arrêt ordonnés, signaux corrects |
-| **Plusieurs processus** | Un seul `CMD` | Autant de services supervisés que voulu, avec dépendances déclarées |
-| **Tâches d'init** | Aucune | Oneshots `s6-rc` exécutés avant les services, dans l'ordre des dépendances |
+### Points forts
 
----
-
-## Compromis de sécurité
-
-C'est le point à comprendre avant d'utiliser cette image.
-
-**s6-overlay doit démarrer en tant que `root` (PID 1)** pour pouvoir remapper `PUID`/`PGID` puis
-abandonner ses privilèges. Cette image n'a donc **aucune directive `USER`**, contrairement à
-l'image parente qui se termine par `USER appuser`.
-
-La documentation officielle de s6-overlay est explicite : l'outillage de changement de privilèges
-(`fix-attrs`, `logutil-service`) ne fonctionne pas dans un conteneur `USER` — un `PUID`/`PGID`
-dynamique et un PID 1 non-root sont mutuellement exclusifs. **On ne peut pas avoir les deux.**
-
-Ce qui est mis en place pour limiter le risque :
-
-- Le **`CMD` par défaut abandonne les privilèges** : `docker run -it <image>` ouvre un shell
-  `appuser`, pas un shell root.
-- Tout le durcissement de l'image parente est conservé : compte `root` verrouillé, bits SUID/SGID
-  supprimés, bits world-writable retirés, `umask 027`.
-- Vos propres services **doivent** abandonner leurs privilèges explicitement — voir
-  [Écrire un service](#4-écrire-un-service-supervisé).
-
-**Si vous n'avez pas besoin de `PUID`/`PGID` dynamiques**, préférez l'image parente
-[`Docker-Ubuntu-18.04-Bionic`](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic) :
-elle tourne en utilisateur non-root de bout en bout, ce qui reste la posture la plus sûre.
+- ✅ **Construite `FROM scratch`** depuis le rootfs OCI officiel Ubuntu — aucune couche de base tierce
+- ✅ **s6-overlay en PID 1** — nettoyage des zombies, démarrage et arrêt ordonnés, signaux corrects
+- ✅ **`PUID` / `PGID` configurables à l'exécution** — appliqués au démarrage, avant tout service
+- ✅ **Supervision multi-services** avec dépendances déclarées entre services
+- ✅ **Non-root par défaut** — le `CMD` par défaut abandonne les privilèges vers `appuser`
+- ✅ **Durcissement système** — compte `root` verrouillé, bits SUID/SGID supprimés, bits
+  world-writable retirés, `umask 027`
+- ✅ **Intégrité de la chaîne d'approvisionnement** — builder Alpine figé par digest, tarballs
+  s6-overlay figés par SHA256 et vérifiés avant extraction, actions CI figées par SHA de commit
+- ✅ **Init fail-fast** — un script d'init en échec arrête le conteneur au lieu de le laisser
+  tourner dans un état incohérent
+- ✅ **Optimisation APT & dpkg** — aucun paquet recommandé/suggéré, aucune traduction, cache propre
+- ✅ **Vérifiée en continu** — hadolint, shellcheck, 8 tests d'intégration sur conteneur, et scans
+  Trivy hebdomadaires
 
 ---
 
-## Différences avec l'image de base LinuxServer.io
+## Déroulement du démarrage
 
-Cette image suit la même approche générale que
-[`linuxserver/docker-baseimage-ubuntu`](https://github.com/linuxserver/docker-baseimage-ubuntu)
-mais s'en écarte volontairement sur plusieurs points :
+Comprendre la séquence de démarrage montre où votre propre code s'insère :
 
-| Point | LinuxServer.io | Cette image |
-|---|---|---|
-| **Multi-arch** | `ENV ARCH=amd64` en dur ; un Dockerfile distinct par architecture | Un seul Dockerfile ; correspondance `TARGETARCH` → arch s6 résolue au build |
-| **Intégrité des téléchargements** | Tarballs s6 récupérés sans aucune vérification | **SHA256 figés dans le Dockerfile** et vérifiés avant extraction — un tarball altéré fait échouer le build |
-| **Code distant à l'exécution** | `S6_STAGE2_HOOK=/docker-mods` télécharge et exécute des scripts depuis Internet au démarrage | **Non utilisé.** Aucun code distant n'est récupéré ni exécuté à l'exécution |
-| **Dépendances distantes au build** | Scripts `ADD`és depuis `raw.githubusercontent.com` sur des refs mutables (`v3`, `v1`) | Uniquement les tarballs de release s6, figés et vérifiés |
-| **Échec d'un script d'init** | `S6_BEHAVIOUR_IF_STAGE2_FAILS` laissé au défaut `0` — un échec est ignoré | Réglé à **`2`** : un échec **arrête le conteneur** au lieu de tourner avec de mauvaises permissions |
-| **Durcissement système** | Non appliqué dans l'image de base | `root` verrouillé, SUID/SGID supprimés, world-writable retirés, `umask 027` |
-| **`CMD` par défaut** | Aucun (root par défaut) | Abandonne les privilèges vers `appuser` |
-| **Tests** | — | La CI exécute **8 tests d'intégration** sur un conteneur réel à chaque build |
+```
+docker run
+   │
+   ├─ 1. ENTRYPOINT /init            s6-overlay devient PID 1
+   │
+   ├─ 2. oneshots s6-rc              init-adduser applique PUID/PGID
+   │        (ordre des dépendances)  ← vos tâches d'init ici
+   │
+   ├─ 3. longruns s6-rc              démarrage des daemons supervisés
+   │        (ordre des dépendances)  ← vos services ici
+   │
+   └─ 4. CMD                         exécuté comme processus normal
+                                     le conteneur s'arrête quand il se termine
+```
+
+À l'arrêt (`docker stop`, ou fin du `CMD`), la séquence se déroule à l'envers : les services sont
+arrêtés dans l'ordre des dépendances, puis les processus restants reçoivent `SIGTERM`, puis
+`SIGKILL` après un délai de grâce.
 
 ---
 
-## Variables d'environnement s6
+## Référence de l'image
 
-En plus des variables de l'image parente, cette image définit :
+### Registres et tags
 
-| Variable | Valeur | Raison |
+| Registre | Image | Architectures |
 |---|---|---|
-| `S6_BEHAVIOUR_IF_STAGE2_FAILS` | `2` | Arrête le conteneur si un script d'init échoue, au lieu de continuer silencieusement |
-| `S6_CMD_WAIT_FOR_SERVICES_MAXTIME` | `0` | Aucun délai maximal de démarrage imposé aux services |
+| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
+| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
+
+Les tags pointent vers un manifeste multi-architecture : Docker sélectionne automatiquement
+l'image correspondant à la plateforme hôte. Les tags `YYYY.MM` (par ex. `2026.08`) sont des
+instantanés mensuels immuables — préférez-les pour des déploiements reproductibles, et `latest`
+pour bénéficier automatiquement des mises à jour de sécurité.
+
+### Paquets inclus
+
+| Catégorie | Paquets |
+|---|---|
+| Shell & base | `bash`, `cron`, `curl`, `gnupg`, `jq`, `netcat-openbsd`, `tzdata` |
+| Outils système | `apt-utils`, `ca-certificates`, `locales` |
+| Init & supervision | `s6-overlay` 3.2.3.2 (lié statiquement, dans `/command` et `/package`) |
+
+### Variables d'environnement
+
+| Variable | Défaut | Description |
+|---|---|---|
+| `PUID` | `1000` | UID appliqué à `appuser` au démarrage du conteneur |
+| `PGID` | `1000` | GID appliqué à `appuser` au démarrage du conteneur |
+| `HOME` | `/config` | Répertoire personnel de `appuser` |
+| `TZ` | `UTC` | Fuseau horaire |
+| `LANG` | `en_US.UTF-8` | Locale (également `LANGUAGE`, `LC_ALL`) |
+| `TERM` | `xterm` | Type de terminal |
+| `DEBIAN_FRONTEND` | `noninteractive` | Supprime les invites APT interactives |
+| `PATH` | `/command:/usr/local/sbin:…` | `/command` contient les binaires s6 |
+
+Réglages s6-overlay définis par cette image :
+
+| Variable | Valeur | Effet |
+|---|---|---|
+| `S6_BEHAVIOUR_IF_STAGE2_FAILS` | `2` | Arrête le conteneur si un script d'init échoue |
+| `S6_CMD_WAIT_FOR_SERVICES_MAXTIME` | `0` | Aucun délai de démarrage imposé aux services |
 | `S6_VERBOSITY` | `1` | N'affiche que les avertissements et erreurs |
 
-`PUID` / `PGID` (défaut `1000`) sont désormais **lus au démarrage du conteneur**, plus figés à
-la construction. La liste complète des réglages s6 est dans la
-[documentation officielle](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour).
+Toute autre [variable s6-overlay](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour)
+peut être définie à l'exécution avec `-e`.
+
+### Arborescence
+
+| Chemin | Rôle |
+|---|---|
+| `/config` | Home de `appuser`, mode `750`, appartenant à `appuser` — montez vos données persistantes ici |
+| `/command` | Binaires s6 (`s6-setuidgid`, `with-contenv`, …) |
+| `/etc/s6-overlay/s6-rc.d/` | Définitions de services |
+| `/etc/s6-overlay/user-bundles.d/user/contents.d/` | Services activés au démarrage |
+| `/etc/s6-overlay/scripts/` | Scripts shell appelés par les définitions de services |
 
 ---
 
-## Utilisation
+## Prise en main
 
-### 1. Lancer un conteneur interactif
+### Lancer un conteneur
 
 ```bash
 docker run -it --rm ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
 ```
 
-Vous arrivez dans un shell `appuser`, pas `root` — le `CMD` par défaut abandonne les privilèges.
+Vous obtenez un shell en tant que `appuser` — le `CMD` par défaut abandonne les privilèges.
 
-### 2. Vérifier le PUID/PGID dynamique
+### Définir l'UID/GID de l'utilisateur
+
+Faites correspondre l'utilisateur du conteneur à un utilisateur de l'hôte pour que les fichiers
+des volumes montés aient la bonne propriété :
 
 ```bash
-docker run --rm -e PUID=1500 -e PGID=1600 \
+docker run --rm \
+  -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v "$PWD/data:/config" \
   ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest \
   sh -c 'id appuser'
 ```
 
-```
-uid=1500(appuser) gid=1600(appuser) groups=1600(appuser)
-```
+`appuser` est remappé et `/config` réattribué **avant** le démarrage de tout service. Les valeurs
+doivent être des entiers positifs ; toute autre valeur arrête le conteneur avec une erreur
+explicite.
 
-C'est le comportement que l'image parente ne peut pas offrir.
+### Construire votre propre image
 
-### 3. Installer des paquets dans une image dérivée
-
-L'installation de paquets se fait toujours **au build, en tant que `root`** — comme pour l'image
-parente :
+L'installation de paquets se fait au build, en tant que `root` :
 
 ```dockerfile
 FROM ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
@@ -358,42 +596,142 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 ```
 
-Pas besoin de `USER root` ici : cette image construit déjà en root.
+> **N'installez pas de paquets au démarrage du conteneur** (par ex. un `apt-get install` dans
+> `command:`). Les services tournent sans privilèges, APT échouera donc avec `Permission denied`
+> sur `/var/lib/apt/lists`. Installez au moment du build.
 
-### 4. Écrire un service supervisé
+---
 
-Créez une définition de service `s6-rc`. Exemple avec NGINX :
+## Ajouter vos propres services
 
-`root/etc/s6-overlay/s6-rc.d/nginx/type` :
+Les définitions de services vivent sous `/etc/s6-overlay/s6-rc.d/`. Conservez-les dans un
+répertoire `root/` de votre contexte de build et copiez l'arborescence entière — c'est la
+convention utilisée par cette image elle-même.
+
+### Une tâche d'init (oneshot)
+
+Exécutée une fois au démarrage, avant les services. Utile pour générer une configuration ou
+corriger des permissions.
+
+`root/etc/s6-overlay/s6-rc.d/init-myapp/type`
+```
+oneshot
+```
+
+`root/etc/s6-overlay/s6-rc.d/init-myapp/up`
+```
+/etc/s6-overlay/scripts/init-myapp
+```
+
+`root/etc/s6-overlay/s6-rc.d/init-myapp/dependencies.d/init-adduser` — *fichier vide.*
+Garantit que `PUID`/`PGID` sont déjà appliqués quand votre tâche s'exécute.
+
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/init-myapp` — *fichier vide.*
+Active la tâche au démarrage.
+
+`root/etc/s6-overlay/scripts/init-myapp` — *doit être exécutable.*
+```sh
+#!/command/with-contenv sh
+set -eu
+
+# Écrire les traces sur stderr : stdout appartient au CMD.
+echo "[init-myapp] préparation des répertoires" >&2
+
+mkdir -p /config/myapp
+chown appuser:appuser /config/myapp
+```
+
+> Le fichier `up` n'est **pas** un script shell : c'est une unique ligne de commande
+> [execline](https://skarnet.org/software/execline/). Déléguez toujours la logique réelle à un
+> script séparé, comme ci-dessus.
+
+### Un daemon supervisé
+
+`root/etc/s6-overlay/s6-rc.d/myapp/type`
 ```
 longrun
 ```
 
-`root/etc/s6-overlay/s6-rc.d/nginx/run` :
+`root/etc/s6-overlay/s6-rc.d/myapp/run` — *doit être exécutable.*
 ```sh
 #!/command/with-contenv sh
 exec 2>&1
-# Abandon des privilèges : le superviseur tourne en root, pas le service.
+# Le superviseur tourne en root ; le daemon ne doit pas.
+exec s6-setuidgid appuser /usr/bin/myapp --foreground
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp/dependencies.d/init-adduser` — *fichier vide.*
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/myapp` — *fichier vide.*
+
+Deux règles importantes :
+
+- **Le daemon doit rester au premier plan.** Un processus qui se détache en arrière-plan est
+  interprété comme un crash par le superviseur et sera relancé en boucle.
+- **Abandonnez les privilèges avec `s6-setuidgid`.** Tout ce qui se trouve sous `s6-rc.d` démarre
+  en `root`.
+
+### Intégration dans votre Dockerfile
+
+```dockerfile
+COPY root/ /
+RUN chmod 755 /etc/s6-overlay/scripts/* \
+              /etc/s6-overlay/s6-rc.d/myapp/run
+```
+
+Le `chmod` est important si vos fichiers proviennent d'une récupération ayant perdu le bit
+exécutable (téléchargement ZIP, ou Git sous Windows).
+
+---
+
+## Exemple complet : NGINX
+
+Un service fonctionnel, exécuté sans privilèges. Un processus non privilégié ne pouvant pas se
+lier aux ports inférieurs à 1024, NGINX écoute sur `8080`.
+
+`Dockerfile`
+```dockerfile
+FROM ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends nginx && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Écouter sur un port non privilégié (les lignes IPv4 et IPv6 se
+    # terminent toutes deux par "80 default_server;", seul ce suffixe
+    # est remplacé).
+    sed -i 's/80 default_server;/8080 default_server;/g' /etc/nginx/sites-enabled/default && \
+    # La directive "user" ne s'applique que si le master tourne en root.
+    sed -i '/^user /d' /etc/nginx/nginx.conf && \
+    # /run n'est pas accessible en écriture par appuser.
+    sed -i 's#pid /run/nginx.pid;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf && \
+    # Rediriger les logs vers stdout/stderr du conteneur.
+    ln -sf /dev/stdout /var/log/nginx/access.log && \
+    ln -sf /dev/stderr /var/log/nginx/error.log && \
+    # Les répertoires de cache et temporaires doivent être accessibles
+    # en écriture par appuser.
+    chown -R appuser:appuser /var/lib/nginx
+
+COPY root/ /
+RUN chmod 755 /etc/s6-overlay/s6-rc.d/nginx/run
+
+EXPOSE 8080
+```
+
+`root/etc/s6-overlay/s6-rc.d/nginx/type`
+```
+longrun
+```
+
+`root/etc/s6-overlay/s6-rc.d/nginx/run`
+```sh
+#!/command/with-contenv sh
+exec 2>&1
 exec s6-setuidgid appuser nginx -g "daemon off;"
 ```
 
-`root/etc/s6-overlay/s6-rc.d/nginx/dependencies.d/init-adduser` — fichier vide.
-Garantit que `PUID`/`PGID` sont appliqués **avant** le démarrage de NGINX.
+`root/etc/s6-overlay/s6-rc.d/nginx/dependencies.d/init-adduser` — *fichier vide.*
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/nginx` — *fichier vide.*
 
-`root/etc/s6-overlay/user-bundles.d/user/contents.d/nginx` — fichier vide.
-Enregistre le service pour qu'il démarre au boot du conteneur.
-
-Puis dans votre Dockerfile :
-```dockerfile
-COPY root/ /
-RUN chmod +x /etc/s6-overlay/s6-rc.d/nginx/run
-```
-
-> Remarque : NGINX doit écouter sur un port ≥ 1024 (par ex. `8080`) puisqu'il ne tourne plus
-> en root.
-
-### 5. Docker Compose
-
+`docker-compose.yml`
 ```yaml
 services:
   web:
@@ -410,31 +748,107 @@ services:
       PGID: 1000
 ```
 
+```bash
+mkdir -p html && echo '<h1>Ça marche</h1>' > html/index.html
+docker compose up -d --build
+curl http://localhost:8080
+```
+
+> Un montage de volume **remplace** le contenu du répertoire dans l'image. Monter un `./html`
+> vide sur `/var/www/html` supprime la page par défaut de NGINX, et NGINX répond
+> `403 Forbidden` faute d'`index.html` à servir. Créez d'abord un fichier, comme ci-dessus.
+
 ---
 
-## Maintenir la version de s6-overlay
+## Modèle de sécurité
 
-La version de s6-overlay **et ses empreintes SHA256** sont figées dans `Dockerfile-multi-arch`.
-Dependabot ne les suit **pas** (ce n'est pas un manifeste de paquets qu'il sait lire) : la montée
-de version est donc une opération manuelle. La procédure est documentée dans
-[`CONTRIBUTING.md`](./CONTRIBUTING.md#mettre-à-jour-s6-overlay).
+Le **PID 1 du conteneur tourne en `root`** : s6-overlay a besoin de ces privilèges pour appliquer
+`PUID`/`PGID` et transmettre la propriété à des processus non privilégiés. Tout ce qui se trouve
+au-dessus de cette couche est conçu pour réduire ce qui s'exécute réellement avec des privilèges :
+
+| Contrôle | Mise en œuvre |
+|---|---|
+| `CMD` par défaut | Exécuté en tant que `appuser`, pas `root` |
+| Compte `root` | Mot de passe verrouillé (`passwd -l`), `/root` en mode `700` |
+| Shell de connexion de `appuser` | `/usr/sbin/nologin` |
+| Binaires SUID/SGID | Supprimés sur toute l'image au build |
+| Fichiers world-writable | Bit d'écriture retiré sur toute l'image au build |
+| Umask par défaut | `027` |
+| `/config` | Mode `750`, appartenant à `appuser` |
+| Échec d'init | Arrête le conteneur (`S6_BEHAVIOUR_IF_STAGE2_FAILS=2`) |
+| Chaîne d'approvisionnement | Image de base figée par digest ; tarballs s6 figés par SHA256 et vérifiés avant extraction ; actions CI figées par SHA de commit |
+
+**Votre responsabilité :** tout ce que vous ajoutez sous `s6-rc.d` démarre en `root`. Encapsulez
+chaque processus long dans `s6-setuidgid appuser` (ou un autre utilisateur non privilégié), comme
+montré plus haut.
+
+Durcissement recommandé à l'exécution pour vos déploiements :
+
+```yaml
+services:
+  app:
+    image: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+```
+
+Si vous utilisez un **système de fichiers racine en lecture seule**, définissez
+`S6_READ_ONLY_ROOT=1` pour que s6-overlay écrive son état d'exécution dans `/run`.
+
+Le signalement de vulnérabilités est décrit dans [`SECURITY.md`](./SECURITY.md).
 
 ---
 
-## Tags
+## Dépannage
 
-| Registre | Tag | Architecture |
-|---|---|---|
-| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
-| GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
-| Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:latest` | amd64 + arm64 |
+**`E: Could not open lock file /var/lib/apt/lists/lock (13: Permission denied)`**
+APT s'exécute sans privilèges. Installez les paquets au build dans votre `Dockerfile`, pas au
+démarrage du conteneur.
 
-> La publication Docker Hub est **optionnelle** dans ce dépôt : si les secrets
-> `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` sont absents, cette étape est ignorée et seul GHCR est
-> publié.
+**`bind() to 0.0.0.0:80 failed (13: Permission denied)`**
+Un processus non privilégié ne peut pas se lier aux ports inférieurs à 1024. Utilisez un port
+≥ 1024 dans le conteneur et remappez-le côté hôte (`-p 80:8080`).
 
-Pour la politique de sécurité, consultez [`SECURITY.md`](./SECURITY.md) ; pour contribuer,
-[`CONTRIBUTING.md`](./CONTRIBUTING.md) et le [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
+**Un service redémarre en boucle**
+Le processus se détache en arrière-plan. Forcez le mode premier plan (`nginx -g "daemon off;"`,
+`--foreground`, `-D FOREGROUND`, …).
+
+**Le conteneur s'arrête immédiatement au démarrage**
+Un script d'init a échoué — c'est `S6_BEHAVIOUR_IF_STAGE2_FAILS=2` qui joue son rôle.
+`docker logs` affichera l'erreur du script fautif.
+
+**`[init-adduser] PUID invalide`**
+`PUID` / `PGID` doivent être des entiers positifs. Vérifiez les erreurs de quoting ou les valeurs
+vides dans votre `.env`.
+
+**Les fichiers créés dans un volume ont le mauvais propriétaire**
+Définissez `PUID`/`PGID` avec les identifiants de l'utilisateur hôte :
+`-e PUID=$(id -u) -e PGID=$(id -g)`.
+
+**Les messages d'init apparaissent dans ma sortie redirigée**
+Cela ne devrait pas arriver — toutes les traces d'init vont sur stderr. Utilisez `2>/dev/null`
+pour les ignorer, et merci d'[ouvrir une issue](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test/issues)
+si vous constatez le contraire.
+
+---
+
+## Maintenance
+
+- **Les images sont reconstruites chaque mois** (le 1er, à 03h00 UTC) avec les dernières mises à
+  jour de sécurité Ubuntu, et peuvent être déclenchées manuellement depuis l'onglet Actions.
+- **Les vulnérabilités sont scannées chaque semaine** (lundi, 04h00 UTC) et après chaque build
+  réussi, avec Trivy. Les résultats sont dans l'onglet **Security → Code scanning** du dépôt ;
+  les rapports JSON complets sont conservés 90 jours en artefacts de build.
+- **La version de s6-overlay et ses empreintes sont figées** dans `Dockerfile-multi-arch` et mises
+  à jour manuellement — la procédure est dans
+  [`CONTRIBUTING.md`](./CONTRIBUTING.md#mettre-à-jour-s6-overlay).
+
+Les contributions sont bienvenues : voir [`CONTRIBUTING.md`](./CONTRIBUTING.md) et le
+[`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
 ---
 
