@@ -1,0 +1,9 @@
+.git
+.github/
+.vscode/
+README.md
+SECURITY.md
+LICENSE
+*.log
+*.tmp
+.DS_Store
