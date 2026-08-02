@@ -88,12 +88,12 @@ jobs:
             VERSION=18.04
             LICENSES=MIT
           tags: |
-            samtechrepo/ubuntu-18.04-bionic:latest
-            samtechrepo/ubuntu-18.04-bionic:${{ steps.version.outputs.tag }}
+            samtechlab/ubuntu-18.04-bionic:latest
+            samtechlab/ubuntu-18.04-bionic:${{ steps.version.outputs.tag }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.vendor="Sam Tech Lab"
-            org.opencontainers.image.url="https://hub.docker.com/r/samtechrepo/ubuntu-18.04-bionic"
+            org.opencontainers.image.url="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic"
 
       - name: Build and push multi-arch to GHCR
         uses: docker/build-push-action@v7
@@ -123,5 +123,5 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: samtechrepo/ubuntu-18.04-bionic
+          repository: samtechlab/ubuntu-18.04-bionic
           readme-filepath: ./README.md

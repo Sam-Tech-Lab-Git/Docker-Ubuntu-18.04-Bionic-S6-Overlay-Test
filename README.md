@@ -9,7 +9,7 @@
       </a>
     </td>
     <td align="center" width="50%">
-      <a href="https://hub.docker.com/r/samtechrepo/ubuntu-18.04-bionic" target="_blank">
+      <a href="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic" target="_blank">
         <img src="https://upload.wikimedia.org/wikipedia/commons/7/76/Ubuntu-logo-2022.svg?sanitize=true"
              alt="Ubuntu Logo" width="180"/>
       </a>
@@ -18,11 +18,11 @@
 </table>
 
 <p align="center">
-  <a href="https://hub.docker.com/r/samtechrepo/ubuntu-18.04-bionic" target="_blank">
-    <img src="https://img.shields.io/docker/pulls/samtechrepo/ubuntu-18.04-bionic.svg?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Pulls"/>
+  <a href="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic" target="_blank">
+    <img src="https://img.shields.io/docker/pulls/samtechlab/ubuntu-18.04-bionic.svg?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Pulls"/>
   </a>
-  <a href="https://hub.docker.com/r/samtechrepo/ubuntu-18.04-bionic" target="_blank">
-    <img src="https://img.shields.io/docker/stars/samtechrepo/ubuntu-18.04-bionic.svg?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Stars"/>
+  <a href="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic" target="_blank">
+    <img src="https://img.shields.io/docker/stars/samtechlab/ubuntu-18.04-bionic.svg?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Stars"/>
   </a>
   <a href="https://github.com/Sam-Tech-Lab-Git" target="_blank">
     <img src="https://img.shields.io/static/v1?label=SamTechLab&message=GitHub&color=94398d&labelColor=555555&style=for-the-badge&logo=github&logoColor=white" alt="GitHub"/>
@@ -112,8 +112,8 @@ Designed to be **secure, fast, and multi-purpose**, it includes advanced APT opt
 
 | Registry | Tag | Architecture |
 |---|---|---|
-| Docker Hub | `samtechrepo/ubuntu-18.04-bionic:latest` | amd64 + arm64 |
-| Docker Hub | `samtechrepo/ubuntu-18.04-bionic:YYYY.MM` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic:latest` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic:YYYY.MM` | amd64 + arm64 |
 | GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest` | amd64 + arm64 |
 | GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:YYYY.MM` | amd64 + arm64 |
 
@@ -136,13 +136,13 @@ Want to contribute? See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and the [`CODE_OF
 ### 1. Run an interactive container
 
 ```bash
-docker run -it --rm samtechrepo/ubuntu-18.04-bionic:latest /bin/bash
+docker run -it --rm samtechlab/ubuntu-18.04-bionic:latest /bin/bash
 ```
 
 ### 2. Simple Dockerfile
 
 ```dockerfile
-FROM samtechrepo/ubuntu-18.04-bionic:latest
+FROM samtechlab/ubuntu-18.04-bionic:latest
 
 # The base image runs as non-root (`USER appuser`) by default, so package
 # installation must happen as root during the build, then drop back down.
@@ -278,8 +278,8 @@ Conçue pour être sécurisée, rapide et multi-usage, elle inclut des optimisat
 
 | Registre | Tag | Architecture |
 |---|---|---|
-| Docker Hub | `samtechrepo/ubuntu-18.04-bionic:latest` | amd64 + arm64 |
-| Docker Hub | `samtechrepo/ubuntu-18.04-bionic:YYYY.MM` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic:latest` | amd64 + arm64 |
+| Docker Hub | `samtechlab/ubuntu-18.04-bionic:YYYY.MM` | amd64 + arm64 |
 | GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest` | amd64 + arm64 |
 | GHCR | `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:YYYY.MM` | amd64 + arm64 |
 
@@ -302,13 +302,13 @@ Envie de contribuer ? Consultez [`CONTRIBUTING.md`](./CONTRIBUTING.md) et le [`C
 ### 1. Lancer un conteneur interactif
 
 ```bash
-docker run -it --rm samtechrepo/ubuntu-18.04-bionic:latest /bin/bash
+docker run -it --rm samtechlab/ubuntu-18.04-bionic:latest /bin/bash
 ```
 
 ### 2. Dockerfile simple
 
 ```dockerfile
-FROM samtechrepo/ubuntu-18.04-bionic:latest
+FROM samtechlab/ubuntu-18.04-bionic:latest
 
 # L'image de base tourne en non-root (`USER appuser`) par défaut : l'installation
 # de paquets doit donc se faire en root pendant le build, puis repasser en appuser.
