@@ -1,0 +1,57 @@
+#!/command/with-contenv sh
+# ------------------------------------------------------------------ #
+# init-adduser — remappage dynamique de l'UID/GID de `appuser`        #
+# ------------------------------------------------------------------ #
+# Exécuté comme oneshot s6-rc au démarrage du conteneur, AVANT tout
+# service utilisateur. C'est ce qui rend PUID/PGID réellement
+# configurables à l'exécution : sans ce script, les valeurs passées
+# dans docker-compose.yml seraient ignorées, l'UID étant figé au build.
+#
+# Le shebang `with-contenv` injecte les variables d'environnement du
+# conteneur (PUID, PGID) dans l'environnement du script ; s6 réinitialise
+# l'environnement des services par défaut, elles seraient sinon absentes.
+#
+# set -e : toute erreur interrompt le script. Combiné à
+# S6_BEHAVIOUR_IF_STAGE2_FAILS=2, un échec ici arrête le conteneur
+# plutôt que de le laisser tourner avec de mauvaises permissions.
+set -eu
+
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+
+# Valider que les valeurs sont bien des entiers : `usermod -u` avec une
+# valeur non numérique échouerait de façon peu lisible, et une valeur
+# vide remapperait silencieusement vers 0 (root) sur certains shells.
+for pair in "PUID:${PUID}" "PGID:${PGID}"; do
+    name="${pair%%:*}"
+    value="${pair#*:}"
+    case "${value}" in
+        '' | *[!0-9]*)
+            echo "[init-adduser] ${name} invalide : '${value}' (entier attendu)" >&2
+            exit 1
+            ;;
+    esac
+done
+
+CUR_UID="$(id -u appuser)"
+CUR_GID="$(id -g appuser)"
+
+# Idempotent : ne rien faire si les identifiants correspondent déjà.
+# Un `chown -R /config` inutile peut coûter très cher sur un volume
+# monté contenant beaucoup de fichiers.
+if [ "${CUR_GID}" != "${PGID}" ] || [ "${CUR_UID}" != "${PUID}" ]; then
+    echo "[init-adduser] remappage appuser ${CUR_UID}:${CUR_GID} -> ${PUID}:${PGID}"
+
+    # -o (non-unique) évite un échec si l'UID/GID cible existe déjà
+    # dans l'image (cas courant avec les UID hôte standards).
+    if [ "${CUR_GID}" != "${PGID}" ]; then
+        groupmod -o -g "${PGID}" appuser
+    fi
+    if [ "${CUR_UID}" != "${PUID}" ]; then
+        usermod -o -u "${PUID}" appuser
+    fi
+
+    chown -R appuser:appuser /config
+fi
+
+echo "[init-adduser] appuser prêt (UID=$(id -u appuser), GID=$(id -g appuser))"

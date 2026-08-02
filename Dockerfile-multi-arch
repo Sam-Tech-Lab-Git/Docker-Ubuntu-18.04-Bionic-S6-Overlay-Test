@@ -1,5 +1,6 @@
 # ------------------------------------------------ #
 # Étape 1 — Build du rootfs Ubuntu 18.04 (Bionic)  #
+#           + installation de s6-overlay           #
 # ------------------------------------------------ #
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS builder
@@ -12,6 +13,17 @@ ARG TARGETPLATFORM
 ENV REL=bionic
 ENV TAG=oci-bionic-18.04
 ENV ARCH=${TARGETARCH}
+
+# Version de s6-overlay et empreintes SHA256 officielles associées.
+# Les empreintes sont figées ici volontairement : vérifier le tarball
+# contre un fichier .sha256 téléchargé depuis la même origine ne
+# protégerait que de la corruption réseau, pas d'une compromission en
+# amont. Figées, elles doivent être mises à jour en même temps que
+# S6_OVERLAY_VERSION (voir CONTRIBUTING.md).
+ARG S6_OVERLAY_VERSION=3.2.3.2
+ARG S6_SHA256_NOARCH=5379750ed30a84bbd2e2dd74847ba6b5bd29cd0b2e3ea2ec58049b57eb2eda12
+ARG S6_SHA256_X86_64=e6befcc96a437a3831386ecfc51808c5d3e939dc5fe3c02ae9284599e8aa2408
+ARG S6_SHA256_AARCH64=b17f17a82e7a515c682a91edaf2ffdabb73f891981b6c1fd712115693a2f8b4c
 
 # Installer les outils nécessaires
 # hadolint ignore=DL3018
@@ -35,6 +47,29 @@ RUN echo "**** Build rootfs Ubuntu (${REL}) pour ${ARCH} ****" && \
     rm -rf /rootfs/var/log/* /rootfs/home/ubuntu \
         /rootfs/root/.ssh /rootfs/root/.bashrc /rootfs/root/.profile /build
 
+# Installer s6-overlay dans le rootfs.
+# La correspondance TARGETARCH (nomenclature Docker) -> arch s6
+# (nomenclature gcc) est résolue ici, ce qui permet de conserver un
+# seul Dockerfile pour toutes les architectures.
+# Chaque archive est vérifiée contre son empreinte figée AVANT
+# extraction : un tarball altéré fait échouer le build.
+# L'option -p de tar est requise pour préserver les permissions.
+RUN echo "**** Installation de s6-overlay v${S6_OVERLAY_VERSION} pour ${ARCH} ****" && \
+    case "${ARCH}" in \
+        amd64) S6_ARCH=x86_64;  S6_SHA_ARCH="${S6_SHA256_X86_64}"  ;; \
+        arm64) S6_ARCH=aarch64; S6_SHA_ARCH="${S6_SHA256_AARCH64}" ;; \
+        *) echo "Architecture non supportée : ${ARCH}" >&2; exit 1  ;; \
+    esac && \
+    S6_URL="https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}" && \
+    curl -fsSL -o /tmp/s6-noarch.tar.xz "${S6_URL}/s6-overlay-noarch.tar.xz" && \
+    curl -fsSL -o /tmp/s6-arch.tar.xz "${S6_URL}/s6-overlay-${S6_ARCH}.tar.xz" && \
+    printf '%s  /tmp/s6-noarch.tar.xz\n%s  /tmp/s6-arch.tar.xz\n' \
+        "${S6_SHA256_NOARCH}" "${S6_SHA_ARCH}" > /tmp/s6.sha256 && \
+    sha256sum -c /tmp/s6.sha256 && \
+    tar -C /rootfs -Jxpf /tmp/s6-noarch.tar.xz && \
+    tar -C /rootfs -Jxpf /tmp/s6-arch.tar.xz && \
+    rm -f /tmp/s6-noarch.tar.xz /tmp/s6-arch.tar.xz /tmp/s6.sha256
+
 # -------------------------------------- #
 # Étape 2 — Image finale Ubuntu minimale #
 # -------------------------------------- #
@@ -43,14 +78,14 @@ FROM scratch
 
 ARG TARGETARCH
 ARG BUILD_DATE
-ARG REPO_URL=https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic
+ARG REPO_URL=https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test
 ARG AUTHORS="Sam Tech Lab"
-ARG TITLE="Ubuntu 18.04 (Bionic) Base"
-ARG DESCRIPTION="Image Ubuntu 18.04 légère, durcie et multi-architecture"
+ARG TITLE="Ubuntu 18.04 (Bionic) Base - s6-overlay"
+ARG DESCRIPTION="Image Ubuntu 18.04 légère, durcie et multi-architecture, avec s6-overlay comme PID 1"
 ARG VERSION="18.04"
 ARG LICENSES="MIT"
 
-# Copier le rootfs préparé
+# Copier le rootfs préparé (Ubuntu + s6-overlay)
 COPY --from=builder /rootfs/ /
 
 # -------------------------- #
@@ -69,13 +104,29 @@ LABEL maintainer="$AUTHORS" \
 # --------------------------- #
 # Environnement global        #
 # --------------------------- #
+# /command est ajouté au PATH : il contient les binaires s6
+# (s6-setuidgid, with-contenv, etc.) fournis par s6-overlay.
 ENV LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
     LC_ALL=en_US.UTF-8 \
     TERM=xterm \
     DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
-    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    PATH="/command:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# --------------------------------------------------- #
+# Comportement de s6-overlay                          #
+# --------------------------------------------------- #
+# S6_BEHAVIOUR_IF_STAGE2_FAILS=2 : le conteneur s'ARRÊTE si un script
+#   d'init échoue, au lieu de continuer silencieusement (défaut = 0).
+#   Sans cela, un échec du remappage PUID/PGID passerait inaperçu et
+#   laisserait /config avec de mauvaises permissions.
+# S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 : aucun délai maximal imposé aux
+#   services pour démarrer (0 = attente illimitée).
+# S6_VERBOSITY=1 : n'affiche que les avertissements et les erreurs.
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
+    S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 \
+    S6_VERBOSITY=1
 
 # ------------------------------ #
 # Optimisations APT et conteneur #
@@ -135,6 +186,14 @@ RUN set -eux && \
     passwd -l root && chmod 700 /root && \
     echo "**** User appuser ready (UID=${PUID}, GID=${PGID}) ****"
 
+# --------------------------------------------------- #
+# Services et scripts d'init s6-rc                    #
+# --------------------------------------------------- #
+COPY root/ /
+
+RUN set -eux && \
+    chmod 755 /etc/s6-overlay/scripts/*
+
 # --------------- #
 # Nettoyage final #
 # --------------- #
@@ -143,11 +202,12 @@ RUN set -eux && \
     apt-get autoremove -y && apt-get clean && \
     rm -rf /tmp/* /var/tmp/* /var/log/*
 
-# hadolint ignore=DL3066
-USER appuser
+# s6-overlay doit démarrer en tant que root (PID 1) pour pouvoir
+# remapper PUID/PGID puis abandonner ses privilèges. Il n'y a donc pas
+# de directive USER ici, contrairement à l'image sans s6 : c'est le
+# compromis inhérent à un PUID/PGID réellement dynamique (voir README).
+ENTRYPOINT ["/init"]
 
-# Définir le shell par défaut
-SHELL ["/bin/bash", "-c"]
-
-# Commande par défaut
-CMD ["/bin/bash"]
+# Le CMD par défaut, lui, abandonne les privilèges : `docker run -it`
+# ouvre bien un shell appuser, et non un shell root.
+CMD ["/command/s6-setuidgid", "appuser", "/bin/bash"]

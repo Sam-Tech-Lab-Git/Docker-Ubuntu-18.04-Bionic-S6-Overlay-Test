@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'Dockerfile-multi-arch'
+      - 'root/**'
   schedule:
     - cron: "0 3 1 * *" # chaque 1er du mois à 03h00 UTC
   workflow_dispatch:
@@ -24,16 +25,106 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v5
 
       - name: Run hadolint
-        uses: hadolint/hadolint-action@2a66e89f53d0771bb131a7fa31f3136336094aa6
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: Dockerfile-multi-arch
           failure-threshold: error
 
-  build-multi-arch:
+      - name: Lint des scripts d'init s6 (shellcheck)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck -s sh root/etc/s6-overlay/scripts/*
+
+  test:
+    name: Test d'intégration s6-overlay (amd64)
     needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build amd64 uniquement, chargé dans le démon Docker local : on
+      # veut pouvoir exécuter l'image, pas seulement la construire.
+      - name: Build de l'image de test (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile-multi-arch
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: s6-test:ci
+
+      # Chaque test vérifie une propriété que s6-overlay est censé
+      # apporter. Un échec ici bloque la publication de l'image.
+      - name: s6 tourne bien en PID 1
+        run: |
+          PID1=$(docker run --rm s6-test:ci sh -c 'cat /proc/1/comm')
+          echo "PID 1 = ${PID1}"
+          test "${PID1}" = "s6-svscan"
+
+      - name: PUID/PGID par défaut (1000:1000)
+        run: |
+          OUT=$(docker run --rm s6-test:ci sh -c 'echo "$(id -u appuser):$(id -g appuser)"')
+          echo "appuser = ${OUT}"
+          test "${OUT}" = "1000:1000"
+
+      - name: PUID/PGID remappés dynamiquement à l'exécution
+        run: |
+          OUT=$(docker run --rm -e PUID=1500 -e PGID=1600 s6-test:ci \
+                  sh -c 'echo "$(id -u appuser):$(id -g appuser)"')
+          echo "appuser remappé = ${OUT}"
+          test "${OUT}" = "1500:1600"
+
+      - name: /config appartient bien à appuser après remappage
+        run: |
+          OUT=$(docker run --rm -e PUID=1500 -e PGID=1600 s6-test:ci \
+                  stat -c '%u:%g' /config)
+          echo "/config = ${OUT}"
+          test "${OUT}" = "1500:1600"
+
+      - name: Le CMD par défaut abandonne les privilèges
+        run: |
+          OUT=$(docker run --rm s6-test:ci /command/s6-setuidgid appuser id -un)
+          echo "utilisateur du CMD = ${OUT}"
+          test "${OUT}" = "appuser"
+
+      - name: Le code de sortie du CMD est propagé au conteneur
+        run: |
+          set +e
+          docker run --rm s6-test:ci sh -c 'exit 42'
+          CODE=$?
+          set -e
+          echo "code de sortie = ${CODE}"
+          test "${CODE}" -eq 42
+
+      # Vérifie S6_BEHAVIOUR_IF_STAGE2_FAILS=2 : un PUID invalide doit
+      # arrêter le conteneur, pas le laisser démarrer silencieusement.
+      - name: Un PUID invalide arrête le conteneur (fail-fast)
+        run: |
+          set +e
+          OUT=$(docker run --rm -e PUID=not-a-number s6-test:ci sh -c 'echo DEMARRE' 2>&1)
+          CODE=$?
+          set -e
+          echo "sortie : ${OUT}"
+          echo "code de sortie = ${CODE}"
+          test "${CODE}" -ne 0
+          echo "${OUT}" | grep -q "PUID invalide"
+
+  build-multi-arch:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -43,22 +134,42 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v5
 
       - name: Set up QEMU (cross-arch emulation)
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
+
+      # Ce dépôt étant un banc d'essai, les secrets Docker Hub n'y sont
+      # pas forcément configurés. On teste leur présence pour rendre la
+      # publication Docker Hub optionnelle, au lieu de faire échouer
+      # tout le workflow. GHCR, lui, utilise le GITHUB_TOKEN et
+      # fonctionne toujours.
+      - name: Les identifiants Docker Hub sont-ils disponibles ?
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_USERNAME}" ] && [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Secrets Docker Hub présents : publication activée."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets Docker Hub absents, publication Docker Hub ignorée (GHCR reste actif)."
+          fi
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v4
+        if: steps.dockerhub.outputs.available == 'true'
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GitHub Container Registry (GHCR)
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -73,7 +184,8 @@ jobs:
           echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
 
       - name: Build and push multi-arch to Docker Hub
-        uses: docker/build-push-action@v7
+        if: steps.dockerhub.outputs.available == 'true'
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile-multi-arch
@@ -83,20 +195,20 @@ jobs:
             BUILD_DATE=${{ steps.version.outputs.build_date }}
             REPO_URL=https://github.com/${{ github.repository }}
             AUTHORS=Sam Tech Lab
-            TITLE=Ubuntu 18.04 (Bionic) Base
-            DESCRIPTION=Image Ubuntu 18.04 légère, durcie et multi-architecture
+            TITLE=Ubuntu 18.04 (Bionic) Base - s6-overlay
+            DESCRIPTION=Image Ubuntu 18.04 légère, durcie et multi-architecture, avec s6-overlay comme PID 1
             VERSION=18.04
             LICENSES=MIT
           tags: |
-            samtechlab/ubuntu-18.04-bionic:latest
-            samtechlab/ubuntu-18.04-bionic:${{ steps.version.outputs.tag }}
+            samtechlab/ubuntu-18.04-bionic-s6:latest
+            samtechlab/ubuntu-18.04-bionic-s6:${{ steps.version.outputs.tag }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.vendor="Sam Tech Lab"
-            org.opencontainers.image.url="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic"
+            org.opencontainers.image.url="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic-s6"
 
       - name: Build and push multi-arch to GHCR
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile-multi-arch
@@ -106,22 +218,23 @@ jobs:
             BUILD_DATE=${{ steps.version.outputs.build_date }}
             REPO_URL=https://github.com/${{ github.repository }}
             AUTHORS=Sam Tech Lab
-            TITLE=Ubuntu 18.04 (Bionic) Base
-            DESCRIPTION=Image Ubuntu 18.04 légère, durcie et multi-architecture
+            TITLE=Ubuntu 18.04 (Bionic) Base - s6-overlay
+            DESCRIPTION=Image Ubuntu 18.04 légère, durcie et multi-architecture, avec s6-overlay comme PID 1
             VERSION=18.04
             LICENSES=MIT
           tags: |
-            ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
-            ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:${{ steps.version.outputs.tag }}
+            ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+            ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:${{ steps.version.outputs.tag }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.vendor="Sam Tech Lab"
-            org.opencontainers.image.url="https://ghcr.io/${{ github.repository_owner }}/ubuntu-18.04-bionic"
+            org.opencontainers.image.url="https://ghcr.io/${{ github.repository_owner }}/ubuntu-18.04-bionic-s6"
 
       - name: Sync README to Docker Hub
-        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa
+        if: steps.dockerhub.outputs.available == 'true'
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: samtechlab/ubuntu-18.04-bionic
+          repository: samtechlab/ubuntu-18.04-bionic-s6
           readme-filepath: ./README.md

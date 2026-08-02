@@ -34,12 +34,12 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Pull amd64 image locally
-        run: docker pull --platform linux/amd64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
+        run: docker pull --platform linux/amd64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
 
       - name: Scan image for vulnerabilities - SARIF (GitHub Security)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
+          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
           format: sarif
           output: trivy-results.sarif
           exit-code: '0'
@@ -55,7 +55,7 @@ jobs:
       - name: Scan image for vulnerabilities - JSON rapport complet
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
+          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
           format: json
           output: trivy-results.json
           exit-code: '0'
@@ -65,7 +65,7 @@ jobs:
       - name: Upload vulnerability report (JSON artifact)
         uses: actions/upload-artifact@v7
         with:
-          name: vulnerability-report-amd64-${{ steps.version.outputs.tag }}
+          name: vulnerability-report-s6-amd64-${{ steps.version.outputs.tag }}
           path: trivy-results.json
           retention-days: 90
 
@@ -73,7 +73,7 @@ jobs:
         run: |
           echo "## 🔒 Rapport de vulnérabilités - amd64 - ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Image :** \`ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest\` - \`linux/amd64\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image :** \`ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest\` - \`linux/amd64\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-results.json 2>/dev/null || echo 0)
           HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-results.json 2>/dev/null || echo 0)
@@ -125,12 +125,12 @@ jobs:
           platforms: arm64
 
       - name: Pull arm64 image locally
-        run: docker pull --platform linux/arm64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
+        run: docker pull --platform linux/arm64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
 
       - name: Scan image for vulnerabilities - SARIF (GitHub Security)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
+          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
           format: sarif
           output: trivy-results.sarif
           exit-code: '0'
@@ -146,7 +146,7 @@ jobs:
       - name: Scan image for vulnerabilities - JSON rapport complet
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
+          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
           format: json
           output: trivy-results.json
           exit-code: '0'
@@ -156,7 +156,7 @@ jobs:
       - name: Upload vulnerability report (JSON artifact)
         uses: actions/upload-artifact@v7
         with:
-          name: vulnerability-report-arm64-${{ steps.version.outputs.tag }}
+          name: vulnerability-report-s6-arm64-${{ steps.version.outputs.tag }}
           path: trivy-results.json
           retention-days: 90
 
@@ -164,7 +164,7 @@ jobs:
         run: |
           echo "## 🔒 Rapport de vulnérabilités - arm64 - ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Image :** \`ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest\` - \`linux/arm64\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image :** \`ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest\` - \`linux/arm64\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-results.json 2>/dev/null || echo 0)
           HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-results.json 2>/dev/null || echo 0)

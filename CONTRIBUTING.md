@@ -24,12 +24,42 @@ Open an issue describing:
    ```bash
    docker run --rm -i ghcr.io/hadolint/hadolint:latest hadolint --failure-threshold error - < Dockerfile-multi-arch
    ```
-4. Build locally to confirm the image still builds and runs:
+4. Lint the s6 init scripts:
    ```bash
-   docker buildx build -f Dockerfile-multi-arch -t ubuntu-18.04-bionic-test .
-   docker run -it --rm ubuntu-18.04-bionic-test /bin/bash
+   shellcheck -s sh root/etc/s6-overlay/scripts/*
    ```
-5. Open a pull request against `main` describing what changed and why.
+5. Build locally to confirm the image still builds and runs:
+   ```bash
+   docker buildx build -f Dockerfile-multi-arch -t ubuntu-18.04-bionic-s6-test --load .
+   docker run -it --rm ubuntu-18.04-bionic-s6-test
+   ```
+6. Check that s6 still behaves as expected:
+   ```bash
+   # s6 must be PID 1
+   docker run --rm ubuntu-18.04-bionic-s6-test sh -c 'cat /proc/1/comm'   # s6-svscan
+   # PUID/PGID must be applied at runtime
+   docker run --rm -e PUID=1500 -e PGID=1600 ubuntu-18.04-bionic-s6-test sh -c 'id appuser'
+   ```
+7. Open a pull request against `main` describing what changed and why.
+
+## Updating s6-overlay
+
+The s6-overlay version and its SHA256 checksums are pinned in `Dockerfile-multi-arch`.
+Dependabot does not track them, so this is a manual procedure:
+
+1. Pick the target version from the [s6-overlay releases](https://github.com/just-containers/s6-overlay/releases).
+2. Fetch the official checksums for that version:
+   ```bash
+   V=3.2.3.2   # replace with the target version
+   for f in noarch x86_64 aarch64; do
+     curl -sL "https://github.com/just-containers/s6-overlay/releases/download/v${V}/s6-overlay-${f}.tar.xz.sha256"
+   done
+   ```
+3. Update `S6_OVERLAY_VERSION`, `S6_SHA256_NOARCH`, `S6_SHA256_X86_64` and `S6_SHA256_AARCH64`
+   in `Dockerfile-multi-arch` — **all four together**. A version bumped without its checksums
+   will fail the build, which is the intended safety net.
+4. Update the s6-overlay badge version in `README.md`.
+5. Build and run the checks above. The CI integration tests will also run on merge to `main`.
 
 ## CI on pull requests
 
@@ -71,12 +101,43 @@ Ouvrez une issue en précisant :
    ```bash
    docker run --rm -i ghcr.io/hadolint/hadolint:latest hadolint --failure-threshold error - < Dockerfile-multi-arch
    ```
-4. Construisez l'image localement pour confirmer qu'elle build et fonctionne toujours :
+4. Vérifiez les scripts d'init s6 :
    ```bash
-   docker buildx build -f Dockerfile-multi-arch -t ubuntu-18.04-bionic-test .
-   docker run -it --rm ubuntu-18.04-bionic-test /bin/bash
+   shellcheck -s sh root/etc/s6-overlay/scripts/*
    ```
-5. Ouvrez une pull request vers `main` en décrivant ce qui a changé et pourquoi.
+5. Construisez l'image localement pour confirmer qu'elle build et fonctionne toujours :
+   ```bash
+   docker buildx build -f Dockerfile-multi-arch -t ubuntu-18.04-bionic-s6-test --load .
+   docker run -it --rm ubuntu-18.04-bionic-s6-test
+   ```
+6. Vérifiez que s6 se comporte toujours comme attendu :
+   ```bash
+   # s6 doit être PID 1
+   docker run --rm ubuntu-18.04-bionic-s6-test sh -c 'cat /proc/1/comm'   # s6-svscan
+   # PUID/PGID doivent être appliqués à l'exécution
+   docker run --rm -e PUID=1500 -e PGID=1600 ubuntu-18.04-bionic-s6-test sh -c 'id appuser'
+   ```
+7. Ouvrez une pull request vers `main` en décrivant ce qui a changé et pourquoi.
+
+### Mettre à jour s6-overlay
+
+La version de s6-overlay et ses empreintes SHA256 sont figées dans `Dockerfile-multi-arch`.
+Dependabot ne les suit pas : c'est donc une procédure manuelle.
+
+1. Choisissez la version cible dans les [releases s6-overlay](https://github.com/just-containers/s6-overlay/releases).
+2. Récupérez les empreintes officielles de cette version :
+   ```bash
+   V=3.2.3.2   # remplacer par la version cible
+   for f in noarch x86_64 aarch64; do
+     curl -sL "https://github.com/just-containers/s6-overlay/releases/download/v${V}/s6-overlay-${f}.tar.xz.sha256"
+   done
+   ```
+3. Mettez à jour `S6_OVERLAY_VERSION`, `S6_SHA256_NOARCH`, `S6_SHA256_X86_64` et
+   `S6_SHA256_AARCH64` dans `Dockerfile-multi-arch` — **les quatre ensemble**. Une version
+   montée sans ses empreintes fera échouer le build, ce qui est le filet de sécurité voulu.
+4. Mettez à jour la version du badge s6-overlay dans `README.md`.
+5. Rejouez les vérifications ci-dessus. Les tests d'intégration de la CI tourneront aussi au
+   merge sur `main`.
 
 ### CI sur les pull requests
 
