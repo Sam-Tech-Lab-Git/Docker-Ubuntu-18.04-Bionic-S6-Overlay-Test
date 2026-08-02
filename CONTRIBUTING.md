@@ -63,7 +63,7 @@ Dependabot does not track them, so this is a manual procedure:
 
 ## CI on pull requests
 
-- `build-multi-arch.yml` only builds and pushes on a push to `main` (path-filtered to `Dockerfile-multi-arch`) or via manual dispatch — **it does not run on pull requests**, so a PR with no CI activity is expected. Test locally first (see step 3–4 above).
+- `build-multi-arch.yml` runs its **lint and integration-test jobs on every pull request**, so a PR that changes the Dockerfile, an s6 service or a workflow is fully checked before merge. It only **builds and pushes** on a push to `main` (path-filtered to `Dockerfile-multi-arch` and `root/**`), on the monthly schedule, or via manual dispatch — never from a pull request.
 - `vuln-scan.yml` scans the published image weekly and after successful builds — it isn't part of PR review either.
 
 ## Style
@@ -141,7 +141,7 @@ Dependabot ne les suit pas : c'est donc une procédure manuelle.
 
 ### CI sur les pull requests
 
-- `build-multi-arch.yml` ne build/push que sur un push vers `main` (filtré sur `Dockerfile-multi-arch`) ou via déclenchement manuel — **il ne tourne pas sur les pull requests**, donc l'absence de CI sur une PR est normale. Testez localement d'abord (voir étapes 3–4 ci-dessus).
+- `build-multi-arch.yml` exécute ses **jobs de lint et de tests d'intégration sur chaque pull request** : une PR modifiant le Dockerfile, un service s6 ou un workflow est donc entièrement vérifiée avant merge. Il ne **build et ne publie** que sur un push vers `main` (filtré sur `Dockerfile-multi-arch` et `root/**`), sur la planification mensuelle, ou via déclenchement manuel — jamais depuis une pull request.
 - `vuln-scan.yml` scanne l'image publiée chaque semaine et après un build réussi — il ne fait pas non plus partie de la revue de PR.
 
 ### Style
