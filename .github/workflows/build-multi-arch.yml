@@ -71,33 +71,42 @@ jobs:
       # apporter. Un échec ici bloque la publication de l'image.
       - name: s6 tourne bien en PID 1
         run: |
-          PID1=$(docker run --rm s6-test:ci sh -c 'cat /proc/1/comm')
+          PID1=$(docker run --rm s6-test:ci sh -c 'cat /proc/1/comm' | tail -n 1)
           echo "PID 1 = ${PID1}"
           test "${PID1}" = "s6-svscan"
 
+      # Régression : les traces des scripts d'init doivent aller sur
+      # stderr. Si elles atterrissent sur stdout, tout usage du type
+      # `docker run image cmd | ...` devient inexploitable.
+      - name: stdout du CMD non pollué par les traces d'init
+        run: |
+          OUT=$(docker run --rm s6-test:ci sh -c 'echo MARQUEUR' 2>/dev/null)
+          echo "stdout brut = [${OUT}]"
+          test "${OUT}" = "MARQUEUR"
+
       - name: PUID/PGID par défaut (1000:1000)
         run: |
-          OUT=$(docker run --rm s6-test:ci sh -c 'echo "$(id -u appuser):$(id -g appuser)"')
+          OUT=$(docker run --rm s6-test:ci sh -c 'echo "$(id -u appuser):$(id -g appuser)"' | tail -n 1)
           echo "appuser = ${OUT}"
           test "${OUT}" = "1000:1000"
 
       - name: PUID/PGID remappés dynamiquement à l'exécution
         run: |
           OUT=$(docker run --rm -e PUID=1500 -e PGID=1600 s6-test:ci \
-                  sh -c 'echo "$(id -u appuser):$(id -g appuser)"')
+                  sh -c 'echo "$(id -u appuser):$(id -g appuser)"' | tail -n 1)
           echo "appuser remappé = ${OUT}"
           test "${OUT}" = "1500:1600"
 
       - name: /config appartient bien à appuser après remappage
         run: |
           OUT=$(docker run --rm -e PUID=1500 -e PGID=1600 s6-test:ci \
-                  stat -c '%u:%g' /config)
+                  stat -c '%u:%g' /config | tail -n 1)
           echo "/config = ${OUT}"
           test "${OUT}" = "1500:1600"
 
       - name: Le CMD par défaut abandonne les privilèges
         run: |
-          OUT=$(docker run --rm s6-test:ci /command/s6-setuidgid appuser id -un)
+          OUT=$(docker run --rm s6-test:ci /command/s6-setuidgid appuser id -un | tail -n 1)
           echo "utilisateur du CMD = ${OUT}"
           test "${OUT}" = "appuser"
 

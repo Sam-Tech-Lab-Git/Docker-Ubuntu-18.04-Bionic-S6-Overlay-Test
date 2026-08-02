@@ -14,6 +14,11 @@
 # set -e : toute erreur interrompt le script. Combiné à
 # S6_BEHAVIOUR_IF_STAGE2_FAILS=2, un échec ici arrête le conteneur
 # plutôt que de le laisser tourner avec de mauvaises permissions.
+#
+# Toutes les traces de ce script vont sur stderr, jamais sur stdout :
+# stdout appartient au CMD de l'utilisateur. Sans cela, un
+# `docker run image cmd` verrait la sortie de cmd polluée par nos
+# messages d'init, ce qui casse tout usage en pipeline.
 set -eu
 
 PUID="${PUID:-1000}"
@@ -40,7 +45,7 @@ CUR_GID="$(id -g appuser)"
 # Un `chown -R /config` inutile peut coûter très cher sur un volume
 # monté contenant beaucoup de fichiers.
 if [ "${CUR_GID}" != "${PGID}" ] || [ "${CUR_UID}" != "${PUID}" ]; then
-    echo "[init-adduser] remappage appuser ${CUR_UID}:${CUR_GID} -> ${PUID}:${PGID}"
+    echo "[init-adduser] remappage appuser ${CUR_UID}:${CUR_GID} -> ${PUID}:${PGID}" >&2
 
     # -o (non-unique) évite un échec si l'UID/GID cible existe déjà
     # dans l'image (cas courant avec les UID hôte standards).
@@ -54,4 +59,4 @@ if [ "${CUR_GID}" != "${PGID}" ] || [ "${CUR_UID}" != "${PUID}" ]; then
     chown -R appuser:appuser /config
 fi
 
-echo "[init-adduser] appuser prêt (UID=$(id -u appuser), GID=$(id -g appuser))"
+echo "[init-adduser] appuser prêt (UID=$(id -u appuser), GID=$(id -g appuser))" >&2

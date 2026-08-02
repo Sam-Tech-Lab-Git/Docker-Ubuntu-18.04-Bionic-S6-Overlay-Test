@@ -104,7 +104,7 @@ but deliberately diverges on several points:
 | **Init failure handling** | `S6_BEHAVIOUR_IF_STAGE2_FAILS` left at default `0` — a failed init is ignored | Set to **`2`**: a failed init **stops the container** instead of running with wrong permissions |
 | **System hardening** | Not applied in the base | `root` locked, SUID/SGID stripped, world-writable bits removed, `umask 027` |
 | **Default `CMD`** | None (root by default) | Drops privileges to `appuser` |
-| **Testing** | — | CI runs **7 integration tests** against a real container on every build |
+| **Testing** | — | CI runs **8 integration tests** against a real container on every build |
 
 ---
 
@@ -301,7 +301,7 @@ mais s'en écarte volontairement sur plusieurs points :
 | **Échec d'un script d'init** | `S6_BEHAVIOUR_IF_STAGE2_FAILS` laissé au défaut `0` — un échec est ignoré | Réglé à **`2`** : un échec **arrête le conteneur** au lieu de tourner avec de mauvaises permissions |
 | **Durcissement système** | Non appliqué dans l'image de base | `root` verrouillé, SUID/SGID supprimés, world-writable retirés, `umask 027` |
 | **`CMD` par défaut** | Aucun (root par défaut) | Abandonne les privilèges vers `appuser` |
-| **Tests** | — | La CI exécute **7 tests d'intégration** sur un conteneur réel à chaque build |
+| **Tests** | — | La CI exécute **8 tests d'intégration** sur un conteneur réel à chaque build |
 
 ---
 
