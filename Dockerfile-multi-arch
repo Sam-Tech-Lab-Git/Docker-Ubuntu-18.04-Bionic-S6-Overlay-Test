@@ -1,0 +1,152 @@
+# ------------------------------------------------ #
+# Étape 1 — Build du rootfs Ubuntu 18.04 (Bionic)  #
+# ------------------------------------------------ #
+
+FROM alpine:3.21@sha256:c3f8e73fdb79deaebaa2037150150191b9dcbfba68b4a46d70103204c53f4709 AS builder
+
+# Arguments Buildx (auto fournis : TARGETARCH, TARGETPLATFORM)
+ARG TARGETARCH
+ARG TARGETPLATFORM
+
+# Variables globales
+ENV REL=bionic
+ENV TAG=oci-bionic-18.04
+ENV ARCH=${TARGETARCH}
+
+# Installer les outils nécessaires
+# hadolint ignore=DL3018
+RUN apk add --no-cache bash curl git jq xz tar tzdata
+
+# Télécharger le rootfs Ubuntu officiel correspondant à l’architecture
+# hadolint ignore=DL3003
+RUN echo "**** Build rootfs Ubuntu (${REL}) pour ${ARCH} ****" && \
+    git clone --depth=1 https://git.launchpad.net/cloud-images/+oci/ubuntu-base -b "${TAG}" /build && \
+    cd /build/oci && \
+    DIGEST=$(jq -r '.manifests[0].digest[7:]' < index.json) && \
+    cd /build/oci/blobs/sha256 && \
+    if jq -e '.layers // empty' < "${DIGEST}" >/dev/null 2>&1; then \
+        TARBALL=$(jq -r '.layers[0].digest[7:]' < "${DIGEST}"); \
+    else \
+        MULTIDIGEST=$(jq -r ".manifests[] | select(.platform.architecture == \"${ARCH}\") | .digest[7:]" < "${DIGEST}"); \
+        TARBALL=$(jq -r '.layers[0].digest[7:]' < "${MULTIDIGEST}"); \
+    fi && \
+    mkdir /rootfs && \
+    tar -xf "${TARBALL}" -C /rootfs && \
+    rm -rf /rootfs/var/log/* /rootfs/home/ubuntu \
+        /rootfs/root/.ssh /rootfs/root/.bashrc /rootfs/root/.profile /build
+
+# -------------------------------------- #
+# Étape 2 — Image finale Ubuntu minimale #
+# -------------------------------------- #
+
+FROM scratch
+
+ARG TARGETARCH
+ARG BUILD_DATE
+ARG REPO_URL=https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic
+ARG AUTHORS="Sam Tech Lab"
+ARG TITLE="Ubuntu 18.04 Bionic Base"
+ARG DESCRIPTION="Image Ubuntu 18.04 légère, durcie et multi-architecture"
+ARG VERSION="18.04"
+ARG LICENSES="MIT"
+
+# Copier le rootfs préparé
+COPY --from=builder /rootfs/ /
+
+# -------------------------- #
+# Labels conformes OCI       #
+# -------------------------- #
+LABEL maintainer="$AUTHORS" \
+      org.opencontainers.image.title="$TITLE" \
+      org.opencontainers.image.description="$DESCRIPTION" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.architecture=$TARGETARCH \
+      org.opencontainers.image.authors="$AUTHORS" \
+      org.opencontainers.image.licenses="$LICENSES" \
+      org.opencontainers.image.source=$REPO_URL \
+      org.opencontainers.image.created=$BUILD_DATE
+
+# --------------------------- #
+# Environnement global        #
+# --------------------------- #
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    TERM=xterm \
+    DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# ------------------------------ #
+# Optimisations APT et conteneur #
+# ------------------------------ #
+RUN set -eux && \
+    echo "**** Optimisation Ubuntu pour Docker ****" && \
+    printf '%s\n' '#!/bin/sh' 'exit 101' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d && \
+    dpkg-divert --local --rename --add /sbin/initctl && \
+    cp -a /usr/sbin/policy-rc.d /sbin/initctl && \
+    sed -i 's/^exit.*/exit 0/' /sbin/initctl && \
+    echo 'force-unsafe-io' > /etc/dpkg/dpkg.cfg.d/docker-apt-speedup && \
+    echo 'DPkg::Post-Invoke { "rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*.deb /var/cache/apt/*.bin || true"; };' > /etc/apt/apt.conf.d/docker-clean && \
+    echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/00recommends && \
+    echo 'APT::Install-Suggests "false";' >> /etc/apt/apt.conf.d/00recommends && \
+    echo 'Acquire::Languages "none";' > /etc/apt/apt.conf.d/docker-no-languages && \
+    echo 'Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";' > /etc/apt/apt.conf.d/docker-gzip-indexes && \
+    echo 'Apt::AutoRemove::SuggestsImportant "false";' > /etc/apt/apt.conf.d/docker-autoremove-suggests && \
+    mkdir -p /run/systemd && echo 'docker' > /run/systemd/container
+
+# ------------------ #
+# Paquets essentiels #
+# ------------------ #
+# hadolint ignore=DL3008
+RUN set -eux && \
+    echo "**** Installation des paquets de base ****" && \
+    apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        apt-utils \
+        ca-certificates \
+        locales \
+        cron \
+        curl \
+        gnupg \
+        jq \
+        netcat-openbsd \
+        tzdata && \
+    update-ca-certificates && \
+    locale-gen en_US.UTF-8 && \
+    rm -rf /var/lib/apt/lists/*
+
+# -------------------------------------------------- #
+# Sécurité & utilisateur non-root (production-grade) #
+# -------------------------------------------------- #
+ENV PUID=1000 \
+    PGID=1000 \
+    HOME=/config
+
+RUN set -eux && \
+    echo "**** Création utilisateur sécurisé ****" && \
+    groupadd -g ${PGID} appuser && \
+    useradd -l -u ${PUID} -g ${PGID} -d /config -s /usr/sbin/nologin appuser && \
+    mkdir -p /config && chown -R appuser:appuser /config && chmod 750 /config && \
+    echo 'umask 027' >> /etc/profile && \
+    find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod a-s {} + 2>/dev/null || true && \
+    find / -xdev -type f -perm /0002 -exec chmod o-w {} + 2>/dev/null || true && \
+    passwd -l root && chmod 700 /root && \
+    echo "**** User appuser ready (UID=${PUID}, GID=${PGID}) ****"
+
+# --------------- #
+# Nettoyage final #
+# --------------- #
+RUN set -eux && \
+    echo "**** Nettoyage du système ****" && \
+    apt-get autoremove -y && apt-get clean && \
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+USER appuser
+
+# Définir le shell par défaut
+SHELL ["/bin/bash", "-c"]
+
+# Commande par défaut
+CMD ["/bin/bash"]
