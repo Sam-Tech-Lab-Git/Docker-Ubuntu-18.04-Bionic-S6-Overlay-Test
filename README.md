@@ -35,6 +35,43 @@
   </a>
 </p>
 
+<p align="center">
+  <b>English</b> · <a href="#documentation-française">Version française ↓</a>
+</p>
+
+---
+
+## Quickstart
+
+```bash
+# Run a shell (as the unprivileged appuser)
+docker run -it --rm ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
+# Match the container user to your host user
+docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v "$PWD/data:/config" \
+  ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest id appuser
+```
+
+Build on top of it:
+
+```dockerfile
+FROM ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends your-package && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY root/ /
+```
+
+**Contents:** [Overview](#overview) · [How the container boots](#how-the-container-boots) ·
+[Image reference](#image-reference) · [Getting started](#getting-started) ·
+[Adding your own services](#adding-your-own-services) ·
+[Running several services](#running-several-services) · [Logging](#logging) ·
+[Complete example NGINX](#complete-example-nginx) · [Security model](#security-model) ·
+[Troubleshooting](#troubleshooting) · [Maintenance](#maintenance)
+
 ---
 
 ## Overview
@@ -55,7 +92,8 @@ with runtime-configurable UID/GID, and a hardened system baseline — then gets 
 - ✅ **Built `FROM scratch`** from the official Ubuntu OCI rootfs — no third-party base layer
 - ✅ **s6-overlay as PID 1** — zombie reaping, ordered startup and shutdown, correct signal handling
 - ✅ **Runtime-configurable `PUID` / `PGID`** — applied at container start, before any service runs
-- ✅ **Multi-service supervision** with declared dependencies between services
+- ✅ **Multi-service supervision** with declared dependencies and automatic restart
+- ✅ **Per-service log rotation** built in, via `logutil-service`
 - ✅ **Non-root by default** — the default `CMD` drops privileges to `appuser`
 - ✅ **System hardening** — `root` account locked, SUID/SGID bits stripped, world-writable bits
   removed, `umask 027`
@@ -138,15 +176,24 @@ s6-overlay tunables set by this image:
 | `S6_CMD_WAIT_FOR_SERVICES_MAXTIME` | `0` | No startup timeout imposed on services |
 | `S6_VERBOSITY` | `1` | Log warnings and errors only |
 
-Any other [s6-overlay variable](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour)
-can be set at runtime with `-e`.
+Useful ones you can set yourself at runtime:
+
+| Variable | Default | When to use it |
+|---|---|---|
+| `S6_SERVICES_GRACETIME` | `3000` | Milliseconds to let services exit on shutdown before escalating |
+| `S6_KILL_GRACETIME` | `3000` | Milliseconds between the final `SIGTERM` and `SIGKILL` |
+| `S6_READ_ONLY_ROOT` | `0` | Set to `1` when running with a read-only root filesystem |
+| `S6_VERBOSITY` | `1` | Raise to `2`+ to debug the startup sequence |
+
+The full list is in the
+[s6-overlay documentation](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour).
 
 ### Filesystem layout
 
 | Path | Purpose |
 |---|---|
 | `/config` | Home of `appuser`, mode `750`, owned by `appuser` — mount your persistent data here |
-| `/command` | s6 binaries (`s6-setuidgid`, `with-contenv`, …) |
+| `/command` | s6 binaries (`s6-setuidgid`, `with-contenv`, `s6-rc`, …) |
 | `/etc/s6-overlay/s6-rc.d/` | Service definitions |
 | `/etc/s6-overlay/user-bundles.d/user/contents.d/` | Services enabled at boot |
 | `/etc/s6-overlay/scripts/` | Shell scripts called by service definitions |
@@ -274,7 +321,102 @@ download, or Git on Windows).
 
 ---
 
-## Complete example: NGINX
+## Running several services
+
+This is what an init system buys you: several processes in one container, started in the right
+order, each restarted independently if it dies.
+
+Ordering is expressed by creating an **empty file** named after the dependency inside a service's
+`dependencies.d/` directory. To make an API wait for a database:
+
+```
+root/etc/s6-overlay/s6-rc.d/
+├── database/
+│   ├── type                        → longrun
+│   ├── run                         → the database process
+│   └── dependencies.d/
+│       └── init-adduser            (empty)
+└── api/
+    ├── type                        → longrun
+    ├── run                         → the API process
+    └── dependencies.d/
+        ├── init-adduser            (empty)
+        └── database                (empty)   ← api starts after database
+```
+
+Enable both by creating empty files in the user bundle:
+
+```
+root/etc/s6-overlay/user-bundles.d/user/contents.d/database
+root/etc/s6-overlay/user-bundles.d/user/contents.d/api
+```
+
+On shutdown the order reverses automatically: `api` stops first, then `database`.
+
+> **Dependency ≠ readiness.** By default s6 considers a service started as soon as its process is
+> running, not when it is ready to serve. If `api` truly cannot start before the database accepts
+> connections, either make `database` send a
+> [readiness notification](https://skarnet.org/software/s6/notifywhenup.html), or have `api`
+> retry its connection — the latter is usually simpler and more robust.
+
+### Controlling services at runtime
+
+```bash
+docker exec <container> s6-rc -a list          # active services
+docker exec <container> s6-svstat /run/service/api
+docker exec <container> s6-svc -r /run/service/api   # restart one service
+```
+
+---
+
+## Logging
+
+By default, everything a service writes goes to the container's output and is visible with
+`docker logs`. That is the right default for most deployments — your log collector handles the
+rest.
+
+For a service that is too noisy for `docker logs`, s6 can give it a **dedicated, automatically
+rotated log file**. Add a logger service consuming your service's output:
+
+`root/etc/s6-overlay/s6-rc.d/myapp/producer-for`
+```
+myapp-log
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/type`
+```
+longrun
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/consumer-for`
+```
+myapp
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/pipeline-name`
+```
+myapp-pipeline
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/run` — *must be executable.*
+```sh
+#!/command/with-contenv sh
+exec logutil-service /config/logs/myapp
+```
+
+Register the **pipeline** (not the individual services) in the user bundle:
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/myapp-pipeline` — *empty file.*
+
+The log directory must exist and be writable by `nobody` before the logger starts — create it in
+a oneshot that `myapp-log` depends on. Rotation defaults to 20 files of 1 MB each, configurable
+with `S6_LOGGING_SCRIPT`.
+
+> Make sure your service writes to **stdout** for this to capture anything — start its `run`
+> script with `exec 2>&1` so stderr is captured too.
+
+---
+
+## Complete example NGINX
 
 A working service, running unprivileged. Note that an unprivileged process cannot bind ports
 below 1024, so NGINX listens on `8080`.
@@ -367,8 +509,8 @@ minimise what actually runs privileged:
 | Init failure | Stops the container (`S6_BEHAVIOUR_IF_STAGE2_FAILS=2`) |
 | Supply chain | Base image pinned by digest; s6 tarballs pinned by SHA256 and verified pre-extraction; CI actions pinned by commit SHA |
 
-**Your responsibility:** anything you add under `s6-rc.d` starts as `root`. Wrap every long-running
-process in `s6-setuidgid appuser` (or another unprivileged user) as shown above.
+**Your responsibility:** anything you add under `s6-rc.d` starts as `root`. Wrap every
+long-running process in `s6-setuidgid appuser` (or another unprivileged user) as shown above.
 
 Recommended runtime hardening for your deployments:
 
@@ -385,13 +527,38 @@ services:
 ```
 
 If you run with a **read-only root filesystem**, set `S6_READ_ONLY_ROOT=1` so s6-overlay writes
-its runtime state to `/run` instead.
+its runtime state to `/run`.
+
+### Verifying what you are running
+
+Every image carries OCI provenance labels — the exact commit it was built from, and when:
+
+```bash
+docker inspect --format '{{json .Config.Labels}}' \
+  ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest | jq
+```
+
+Pin by digest to guarantee byte-for-byte reproducibility:
+
+```bash
+docker pull ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6@sha256:<digest>
+```
 
 Vulnerability reporting is covered in [`SECURITY.md`](./SECURITY.md).
 
 ---
 
 ## Troubleshooting
+
+### Getting a shell inside a running container
+
+```bash
+docker exec -it <container> bash          # as appuser
+docker exec -it -u 0 <container> bash     # as root, for debugging
+docker logs <container>                   # init and service output
+```
+
+### Common problems
 
 **`E: Could not open lock file /var/lib/apt/lists/lock (13: Permission denied)`**
 APT is running unprivileged. Install packages at build time in your `Dockerfile`, not at container
@@ -407,19 +574,27 @@ The process is daemonising. Force foreground mode (`nginx -g "daemon off;"`, `--
 
 **The container stops immediately at startup**
 An init script failed — this is `S6_BEHAVIOUR_IF_STAGE2_FAILS=2` doing its job. `docker logs` will
-show the failing script's error.
+show the failing script's error. Set `-e S6_VERBOSITY=2` for a more detailed startup trace.
 
 **`[init-adduser] PUID invalide`**
 `PUID` / `PGID` must be positive integers. Check for quoting mistakes or empty values in your
 `.env`.
 
+**A service never starts, no error shown**
+It is probably not registered. Check that an empty file named after it exists in
+`/etc/s6-overlay/user-bundles.d/user/contents.d/`, and confirm with
+`docker exec <container> s6-rc -a list`.
+
+**`exec: ... : Permission denied` on a service**
+The `run` script is not executable. Add `RUN chmod 755 …` in your Dockerfile — ZIP downloads and
+Git on Windows both drop the executable bit.
+
 **Files created in a volume have the wrong owner**
 Set `PUID`/`PGID` to the host user's IDs: `-e PUID=$(id -u) -e PGID=$(id -g)`.
 
-**Init messages appear in my piped output**
-They should not — all init logging goes to stderr. Use `2>/dev/null` if you want to discard it,
-and please [open an issue](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test/issues)
-if you see otherwise.
+**`docker stop` takes ~10 seconds**
+A service is ignoring `SIGTERM`, so Docker waits for its timeout. Fix the service's signal
+handling, or tune `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`.
 
 ---
 
@@ -437,6 +612,46 @@ Contributions are welcome: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) and the
 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 
 ---
+---
+
+# Documentation française
+
+<p align="center">
+  <a href="#docker-ubuntu-1804-lts-bionic--s6-overlay---sam-tech-lab">English version ↑</a> · <b>Français</b>
+</p>
+
+## Démarrage rapide
+
+```bash
+# Lancer un shell (en tant qu'appuser, non privilégié)
+docker run -it --rm ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
+# Aligner l'utilisateur du conteneur sur celui de l'hôte
+docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v "$PWD/data:/config" \
+  ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest id appuser
+```
+
+Construire par-dessus :
+
+```dockerfile
+FROM ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends votre-paquet && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY root/ /
+```
+
+**Sommaire :** [Présentation](#présentation) ·
+[Déroulement du démarrage](#déroulement-du-démarrage) ·
+[Référence de l'image](#référence-de-limage) · [Prise en main](#prise-en-main) ·
+[Ajouter vos propres services](#ajouter-vos-propres-services) ·
+[Plusieurs services](#plusieurs-services) · [Journalisation](#journalisation) ·
+[Exemple complet NGINX](#exemple-complet-nginx) · [Modèle de sécurité](#modèle-de-sécurité) ·
+[Dépannage](#dépannage) · [Maintenance](#maintenance-1)
+
 ---
 
 ## Présentation
@@ -458,7 +673,8 @@ puis vous laisse travailler.
 - ✅ **Construite `FROM scratch`** depuis le rootfs OCI officiel Ubuntu — aucune couche de base tierce
 - ✅ **s6-overlay en PID 1** — nettoyage des zombies, démarrage et arrêt ordonnés, signaux corrects
 - ✅ **`PUID` / `PGID` configurables à l'exécution** — appliqués au démarrage, avant tout service
-- ✅ **Supervision multi-services** avec dépendances déclarées entre services
+- ✅ **Supervision multi-services** avec dépendances déclarées et redémarrage automatique
+- ✅ **Rotation des journaux par service** intégrée, via `logutil-service`
 - ✅ **Non-root par défaut** — le `CMD` par défaut abandonne les privilèges vers `appuser`
 - ✅ **Durcissement système** — compte `root` verrouillé, bits SUID/SGID supprimés, bits
   world-writable retirés, `umask 027`
@@ -542,15 +758,24 @@ Réglages s6-overlay définis par cette image :
 | `S6_CMD_WAIT_FOR_SERVICES_MAXTIME` | `0` | Aucun délai de démarrage imposé aux services |
 | `S6_VERBOSITY` | `1` | N'affiche que les avertissements et erreurs |
 
-Toute autre [variable s6-overlay](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour)
-peut être définie à l'exécution avec `-e`.
+Variables utiles que vous pouvez définir à l'exécution :
+
+| Variable | Défaut | Quand l'utiliser |
+|---|---|---|
+| `S6_SERVICES_GRACETIME` | `3000` | Millisecondes laissées aux services pour s'arrêter avant escalade |
+| `S6_KILL_GRACETIME` | `3000` | Millisecondes entre le `SIGTERM` final et le `SIGKILL` |
+| `S6_READ_ONLY_ROOT` | `0` | Mettre à `1` avec un système de fichiers racine en lecture seule |
+| `S6_VERBOSITY` | `1` | Monter à `2`+ pour déboguer la séquence de démarrage |
+
+La liste complète est dans la
+[documentation s6-overlay](https://github.com/just-containers/s6-overlay#customizing-s6-overlays-behaviour).
 
 ### Arborescence
 
 | Chemin | Rôle |
 |---|---|
 | `/config` | Home de `appuser`, mode `750`, appartenant à `appuser` — montez vos données persistantes ici |
-| `/command` | Binaires s6 (`s6-setuidgid`, `with-contenv`, …) |
+| `/command` | Binaires s6 (`s6-setuidgid`, `with-contenv`, `s6-rc`, …) |
 | `/etc/s6-overlay/s6-rc.d/` | Définitions de services |
 | `/etc/s6-overlay/user-bundles.d/user/contents.d/` | Services activés au démarrage |
 | `/etc/s6-overlay/scripts/` | Scripts shell appelés par les définitions de services |
@@ -683,7 +908,103 @@ exécutable (téléchargement ZIP, ou Git sous Windows).
 
 ---
 
-## Exemple complet : NGINX
+## Plusieurs services
+
+C'est ce qu'apporte un système d'init : plusieurs processus dans un conteneur, démarrés dans le
+bon ordre, chacun redémarré indépendamment s'il meurt.
+
+L'ordre s'exprime en créant un **fichier vide** portant le nom de la dépendance dans le répertoire
+`dependencies.d/` du service. Pour qu'une API attende une base de données :
+
+```
+root/etc/s6-overlay/s6-rc.d/
+├── database/
+│   ├── type                        → longrun
+│   ├── run                         → le processus de base de données
+│   └── dependencies.d/
+│       └── init-adduser            (vide)
+└── api/
+    ├── type                        → longrun
+    ├── run                         → le processus API
+    └── dependencies.d/
+        ├── init-adduser            (vide)
+        └── database                (vide)   ← api démarre après database
+```
+
+Activez les deux en créant des fichiers vides dans le bundle utilisateur :
+
+```
+root/etc/s6-overlay/user-bundles.d/user/contents.d/database
+root/etc/s6-overlay/user-bundles.d/user/contents.d/api
+```
+
+À l'arrêt, l'ordre s'inverse automatiquement : `api` s'arrête d'abord, puis `database`.
+
+> **Dépendance ≠ disponibilité.** Par défaut, s6 considère un service démarré dès que son
+> processus tourne, pas quand il est prêt à répondre. Si `api` ne peut vraiment pas démarrer avant
+> que la base accepte les connexions, faites soit envoyer à `database` une
+> [notification de disponibilité](https://skarnet.org/software/s6/notifywhenup.html), soit
+> réessayer la connexion côté `api` — cette seconde option est généralement plus simple et plus
+> robuste.
+
+### Piloter les services à l'exécution
+
+```bash
+docker exec <conteneur> s6-rc -a list          # services actifs
+docker exec <conteneur> s6-svstat /run/service/api
+docker exec <conteneur> s6-svc -r /run/service/api   # redémarrer un service
+```
+
+---
+
+## Journalisation
+
+Par défaut, tout ce qu'écrit un service part vers la sortie du conteneur et est visible avec
+`docker logs`. C'est le bon comportement dans la plupart des déploiements — votre collecteur de
+logs fait le reste.
+
+Pour un service trop bavard pour `docker logs`, s6 peut lui attribuer un **fichier de log dédié,
+tourné automatiquement**. Ajoutez un service de log consommant la sortie du vôtre :
+
+`root/etc/s6-overlay/s6-rc.d/myapp/producer-for`
+```
+myapp-log
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/type`
+```
+longrun
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/consumer-for`
+```
+myapp
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/pipeline-name`
+```
+myapp-pipeline
+```
+
+`root/etc/s6-overlay/s6-rc.d/myapp-log/run` — *doit être exécutable.*
+```sh
+#!/command/with-contenv sh
+exec logutil-service /config/logs/myapp
+```
+
+Enregistrez le **pipeline** (et non les services individuels) dans le bundle utilisateur :
+`root/etc/s6-overlay/user-bundles.d/user/contents.d/myapp-pipeline` — *fichier vide.*
+
+Le répertoire de logs doit exister et être accessible en écriture par `nobody` avant le démarrage
+du logger — créez-le dans un oneshot dont `myapp-log` dépend. La rotation est par défaut de
+20 fichiers de 1 Mo, configurable via `S6_LOGGING_SCRIPT`.
+
+> Vérifiez que votre service écrit bien sur **stdout** pour que cela capture quelque chose —
+> commencez son script `run` par `exec 2>&1` afin que stderr soit également capturé.
+
+---
+
+## Exemple complet NGINX
 
 Un service fonctionnel, exécuté sans privilèges. Un processus non privilégié ne pouvant pas se
 lier aux ports inférieurs à 1024, NGINX écoute sur `8080`.
@@ -799,11 +1120,37 @@ services:
 Si vous utilisez un **système de fichiers racine en lecture seule**, définissez
 `S6_READ_ONLY_ROOT=1` pour que s6-overlay écrive son état d'exécution dans `/run`.
 
+### Vérifier ce que vous exécutez
+
+Chaque image porte des labels de provenance OCI — le commit exact dont elle est issue, et sa date
+de construction :
+
+```bash
+docker inspect --format '{{json .Config.Labels}}' \
+  ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest | jq
+```
+
+Figez par digest pour garantir une reproductibilité au bit près :
+
+```bash
+docker pull ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6@sha256:<digest>
+```
+
 Le signalement de vulnérabilités est décrit dans [`SECURITY.md`](./SECURITY.md).
 
 ---
 
 ## Dépannage
+
+### Obtenir un shell dans un conteneur en cours d'exécution
+
+```bash
+docker exec -it <conteneur> bash          # en tant qu'appuser
+docker exec -it -u 0 <conteneur> bash     # en tant que root, pour déboguer
+docker logs <conteneur>                   # sortie de l'init et des services
+```
+
+### Problèmes courants
 
 **`E: Could not open lock file /var/lib/apt/lists/lock (13: Permission denied)`**
 APT s'exécute sans privilèges. Installez les paquets au build dans votre `Dockerfile`, pas au
@@ -819,20 +1166,29 @@ Le processus se détache en arrière-plan. Forcez le mode premier plan (`nginx -
 
 **Le conteneur s'arrête immédiatement au démarrage**
 Un script d'init a échoué — c'est `S6_BEHAVIOUR_IF_STAGE2_FAILS=2` qui joue son rôle.
-`docker logs` affichera l'erreur du script fautif.
+`docker logs` affichera l'erreur du script fautif. Utilisez `-e S6_VERBOSITY=2` pour une trace de
+démarrage détaillée.
 
 **`[init-adduser] PUID invalide`**
 `PUID` / `PGID` doivent être des entiers positifs. Vérifiez les erreurs de quoting ou les valeurs
 vides dans votre `.env`.
 
+**Un service ne démarre jamais, sans erreur affichée**
+Il n'est probablement pas enregistré. Vérifiez qu'un fichier vide à son nom existe dans
+`/etc/s6-overlay/user-bundles.d/user/contents.d/`, et confirmez avec
+`docker exec <conteneur> s6-rc -a list`.
+
+**`exec: ... : Permission denied` sur un service**
+Le script `run` n'est pas exécutable. Ajoutez `RUN chmod 755 …` dans votre Dockerfile — les
+téléchargements ZIP et Git sous Windows perdent tous deux le bit exécutable.
+
 **Les fichiers créés dans un volume ont le mauvais propriétaire**
 Définissez `PUID`/`PGID` avec les identifiants de l'utilisateur hôte :
 `-e PUID=$(id -u) -e PGID=$(id -g)`.
 
-**Les messages d'init apparaissent dans ma sortie redirigée**
-Cela ne devrait pas arriver — toutes les traces d'init vont sur stderr. Utilisez `2>/dev/null`
-pour les ignorer, et merci d'[ouvrir une issue](https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test/issues)
-si vous constatez le contraire.
+**`docker stop` met une dizaine de secondes**
+Un service ignore `SIGTERM`, Docker attend donc son délai d'expiration. Corrigez la gestion des
+signaux du service, ou ajustez `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`.
 
 ---
 
