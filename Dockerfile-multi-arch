@@ -45,7 +45,7 @@ ARG TARGETARCH
 ARG BUILD_DATE
 ARG REPO_URL=https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic
 ARG AUTHORS="Sam Tech Lab"
-ARG TITLE="Ubuntu 18.04 Bionic Base"
+ARG TITLE="Ubuntu 18.04 (Bionic) Base"
 ARG DESCRIPTION="Image Ubuntu 18.04 légère, durcie et multi-architecture"
 ARG VERSION="18.04"
 ARG LICENSES="MIT"
