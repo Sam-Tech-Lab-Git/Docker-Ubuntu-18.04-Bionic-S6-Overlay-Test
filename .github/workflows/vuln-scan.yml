@@ -37,7 +37,7 @@ jobs:
         run: docker pull --platform linux/amd64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
 
       - name: Scan image for vulnerabilities - SARIF (GitHub Security)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
           format: sarif
@@ -53,7 +53,7 @@ jobs:
           category: trivy-amd64
 
       - name: Scan image for vulnerabilities - JSON rapport complet
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
           format: json
@@ -63,7 +63,7 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
 
       - name: Upload vulnerability report (JSON artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vulnerability-report-amd64-${{ steps.version.outputs.tag }}
           path: trivy-results.json
@@ -120,7 +120,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU for arm64 emulation
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
@@ -128,7 +128,7 @@ jobs:
         run: docker pull --platform linux/arm64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
 
       - name: Scan image for vulnerabilities - SARIF (GitHub Security)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
           format: sarif
@@ -144,7 +144,7 @@ jobs:
           category: trivy-arm64
 
       - name: Scan image for vulnerabilities - JSON rapport complet
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic:latest
           format: json
@@ -154,7 +154,7 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
 
       - name: Upload vulnerability report (JSON artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vulnerability-report-arm64-${{ steps.version.outputs.tag }}
           path: trivy-results.json
