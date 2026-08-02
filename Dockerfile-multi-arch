@@ -143,6 +143,7 @@ RUN set -eux && \
     apt-get autoremove -y && apt-get clean && \
     rm -rf /tmp/* /var/tmp/* /var/log/*
 
+# hadolint ignore=DL3066
 USER appuser
 
 # Définir le shell par défaut
