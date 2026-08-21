@@ -38,10 +38,16 @@ you must run 18.04 in production, add an Ubuntu Pro subscription inside your der
 | Tag | Contents |
 |---|---|
 | `latest` | Tracks the monthly rebuild — amd64 + arm64 |
-| `YYYY.MM` (e.g. `2026.08`) | Immutable monthly snapshot — amd64 + arm64 |
+| `YYYY.MM` (e.g. `2026.08`) | The build from that month — amd64 + arm64 |
 
 Tags point at a multi-architecture manifest; Docker selects the right image for the host platform.
-Prefer `YYYY.MM` for reproducible deployments.
+
+**Neither tag is immutable.** `YYYY.MM` names the month, not one specific build: any build during
+that month republishes it. For a genuinely fixed image, pin by digest:
+
+```bash
+docker pull samtechlab/ubuntu-18.04-bionic-s6@sha256:<digest>
+```
 
 Also published on GHCR as `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6`.
 
@@ -104,7 +110,8 @@ get `SIGTERM`, then `SIGKILL` after a grace period.
 - **Supply-chain integrity** — Alpine builder pinned by digest, s6-overlay tarballs pinned by
   SHA256 and verified before extraction, CI actions pinned by commit SHA
 - **Fail-fast init** — a failing init script stops the container rather than running on broken
-- Continuously verified — hadolint, shellcheck, 9 container integration tests, weekly Trivy scans
+- Continuously verified — hadolint, shellcheck, 9 container integration tests on both
+  architectures, weekly Trivy scans
 
 ---
 
@@ -298,10 +305,17 @@ un abonnement Ubuntu Pro dans votre image dérivée.
 | Tag | Contenu |
 |---|---|
 | `latest` | Suit la reconstruction mensuelle — amd64 + arm64 |
-| `YYYY.MM` (par ex. `2026.08`) | Instantané mensuel immuable — amd64 + arm64 |
+| `YYYY.MM` (par ex. `2026.08`) | Le build de ce mois-là — amd64 + arm64 |
 
 Les tags pointent vers un manifeste multi-architecture : Docker sélectionne l'image correspondant
-à la plateforme hôte. Préférez `YYYY.MM` pour des déploiements reproductibles.
+à la plateforme hôte.
+
+**Aucun de ces tags n'est immuable.** `YYYY.MM` désigne le mois, pas un build en particulier :
+tout build de ce mois-là le republie. Pour une image réellement figée, épinglez par digest :
+
+```bash
+docker pull samtechlab/ubuntu-18.04-bionic-s6@sha256:<digest>
+```
 
 Également publiée sur GHCR : `ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6`.
 
@@ -365,7 +379,8 @@ dépendances, puis les processus restants reçoivent `SIGTERM`, puis `SIGKILL` a
 - **Intégrité de la chaîne d'approvisionnement** — builder Alpine figé par digest, tarballs
   s6-overlay figés par SHA256 et vérifiés avant extraction, actions CI figées par SHA de commit
 - **Init fail-fast** — un script d'init en échec arrête le conteneur
-- Vérifiée en continu — hadolint, shellcheck, 9 tests d'intégration, scans Trivy hebdomadaires
+- Vérifiée en continu — hadolint, shellcheck, 9 tests d'intégration sur les deux architectures,
+  scans Trivy hebdomadaires
 
 ---
 

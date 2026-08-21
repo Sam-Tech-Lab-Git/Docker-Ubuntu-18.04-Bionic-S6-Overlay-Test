@@ -103,8 +103,8 @@ with runtime-configurable UID/GID, and a hardened system baseline — then gets 
 - ✅ **Fail-fast init** — a failing init script stops the container instead of running on with a
   broken state
 - ✅ **APT & dpkg optimisation** — no recommended/suggested packages, no translations, clean cache
-- ✅ **Continuously verified** — hadolint, shellcheck, 9 container integration tests, and weekly
-  Trivy scans
+- ✅ **Continuously verified** — hadolint, shellcheck, 9 container integration tests run on
+  **both architectures**, and weekly Trivy scans
 
 ---
 
@@ -145,8 +145,16 @@ period.
 | Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
 
 Tags point at a multi-architecture manifest — Docker automatically selects the right image for
-the host platform. `YYYY.MM` tags (e.g. `2026.08`) are immutable monthly snapshots; prefer them
-for reproducible deployments, and `latest` to track the monthly rebuild.
+the host platform. `latest` tracks the monthly rebuild.
+
+**Neither tag is immutable.** A `YYYY.MM` tag names the month a build ran, not one specific build:
+any build during that month republishes it — the monthly schedule, a manual dispatch, or a push to
+`main` that touches the Dockerfile. Two builds in the same month therefore leave `YYYY.MM` pointing
+at the second one, and a deployment pinned to it silently changes underneath.
+
+For a genuinely fixed image, **pin by digest** — see
+[Verifying what you are running](#verifying-what-you-are-running). Use `YYYY.MM` to say *"the
+August build"* when that granularity is enough.
 
 ### Included packages
 
@@ -714,8 +722,8 @@ puis vous laisse travailler.
 - ✅ **Init fail-fast** — un script d'init en échec arrête le conteneur au lieu de le laisser
   tourner dans un état incohérent
 - ✅ **Optimisation APT & dpkg** — aucun paquet recommandé/suggéré, aucune traduction, cache propre
-- ✅ **Vérifiée en continu** — hadolint, shellcheck, 9 tests d'intégration sur conteneur, et scans
-  Trivy hebdomadaires
+- ✅ **Vérifiée en continu** — hadolint, shellcheck, 9 tests d'intégration sur conteneur joués sur
+  **les deux architectures**, et scans Trivy hebdomadaires
 
 ---
 
@@ -756,9 +764,16 @@ arrêtés dans l'ordre des dépendances, puis les processus restants reçoivent 
 | Docker Hub | `samtechlab/ubuntu-18.04-bionic-s6:YYYY.MM` | amd64 + arm64 |
 
 Les tags pointent vers un manifeste multi-architecture : Docker sélectionne automatiquement
-l'image correspondant à la plateforme hôte. Les tags `YYYY.MM` (par ex. `2026.08`) sont des
-instantanés mensuels immuables — préférez-les pour des déploiements reproductibles, et `latest`
-pour suivre la reconstruction mensuelle.
+l'image correspondant à la plateforme hôte. `latest` suit la reconstruction mensuelle.
+
+**Aucun de ces tags n'est immuable.** Un tag `YYYY.MM` désigne le mois où un build a eu lieu, pas
+un build en particulier : tout build de ce mois-là le republie — la planification mensuelle, un
+déclenchement manuel, ou un push sur `main` touchant le Dockerfile. Deux builds dans le même mois
+laissent donc `YYYY.MM` sur le second, et un déploiement épinglé dessus change sans prévenir.
+
+Pour une image réellement figée, **épinglez par digest** — voir
+[Vérifier ce que vous exécutez](#vérifier-ce-que-vous-exécutez). Utilisez `YYYY.MM` pour dire
+« le build d'août » quand cette granularité suffit.
 
 ### Paquets inclus
 
