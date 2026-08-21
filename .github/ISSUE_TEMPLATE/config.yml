@@ -1,0 +1,19 @@
+# Les issues vierges sont désactivées : SECURITY.md demande que les
+# vulnérabilités passent par le signalement privé, et un lien proposé ici
+# arrive au moment où quelqu'un s'apprête à ouvrir une issue publique —
+# c'est-à-dire au seul moment où l'avertissement sert encore à quelque chose.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Signaler une vulnérabilité / Report a vulnerability
+    url: https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test/security/advisories/new
+    about: >-
+      N'ouvrez pas d'issue publique. Utilisez le signalement privé GitHub.
+      / Do not open a public issue. Use GitHub private vulnerability reporting.
+
+  - name: Vulnérabilité Ubuntu 18.04 sans correctif / Unfixed Ubuntu 18.04 CVE
+    url: https://github.com/Sam-Tech-Lab-Git/Docker-Ubuntu-18.04-Bionic-S6-Overlay-Test#base-image-support-status
+    about: >-
+      Bionic est sorti du support standard : la plupart des CVE y sont sans
+      correctif public, et c'est documenté. / Bionic is out of standard
+      support; most CVEs there have no public fix, by design.
