@@ -298,6 +298,14 @@ jobs:
           file: ./Dockerfile-multi-arch
           platforms: linux/amd64,linux/arm64
           push: true
+          # Attestations jointes au manifeste. La provenance était déjà
+          # produite par défaut ; `mode=max` y ajoute les étapes de build et
+          # les sources. Le SBOM, lui, manquait — c'est ce qui permet à un
+          # utilisateur d'auditer les paquets sans reconstruire l'image, et
+          # cela compte d'autant plus sur une base qui ne reçoit plus de
+          # correctifs.
+          sbom: true
+          provenance: mode=max
           build-args: |
             BUILD_DATE=${{ steps.version.outputs.build_date }}
             REPO_URL=https://github.com/${{ github.repository }}
