@@ -62,10 +62,16 @@ jobs:
           fi
 
   test:
-    name: Test d'intégration s6-overlay (amd64)
+    name: Test d'intégration s6-overlay (${{ matrix.arch }})
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
+    strategy:
+      # Une architecture en échec ne doit pas masquer l'état de l'autre.
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
 
     permissions:
       contents: read
@@ -74,20 +80,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # L'arm64 est construit et exécuté sous émulation. Le surcoût est
+      # modeste — environ deux minutes de build — au regard de ce qu'il
+      # couvre : sans lui, la moitié de la matrice publiée n'aurait jamais
+      # vu un processus démarrer.
+      - name: Set up QEMU (émulation arm64)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Build amd64 uniquement, chargé dans le démon Docker local : on
-      # veut pouvoir exécuter l'image, pas seulement la construire.
-      - name: Build de l'image de test (amd64, local)
+      # Une seule architecture par job, chargée dans le démon Docker
+      # local : on veut pouvoir exécuter l'image, pas seulement la
+      # construire.
+      - name: Build de l'image de test (${{ matrix.arch }}, local)
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile-multi-arch
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           push: false
           load: true
           tags: s6-test:ci
+
+      # Les tests ci-dessous n'indiquent pas de plateforme : ils portent
+      # sur l'unique image locale. On vérifie donc ici que c'est bien
+      # celle qu'on croit, faute de quoi le job arm64 testerait de l'amd64
+      # en le présentant comme une couverture des deux architectures.
+      - name: L'image construite est bien en ${{ matrix.arch }}
+        run: |
+          ARCH=$(docker image inspect --format '{{.Architecture}}' s6-test:ci)
+          echo "architecture de l'image = ${ARCH}"
+          test "${ARCH}" = "${{ matrix.arch }}"
 
       # Chaque test vérifie une propriété que s6-overlay est censé
       # apporter. Un échec ici bloque la publication de l'image.
