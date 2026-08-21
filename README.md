@@ -85,7 +85,8 @@ It is designed as a **foundation for your own images**: it ships an init system,
 with runtime-configurable UID/GID, and a hardened system baseline — then gets out of your way.
 
 > **Supported architectures:** `linux/amd64`, `linux/arm64`
-> **Automatic monthly rebuilds** pick up the latest Ubuntu security patches.
+> **Automatic monthly rebuilds** pick up whatever Ubuntu still publishes for Bionic — read
+> [Base image support status](#base-image-support-status) before deploying this in production.
 
 ### Key features
 
@@ -102,7 +103,7 @@ with runtime-configurable UID/GID, and a hardened system baseline — then gets 
 - ✅ **Fail-fast init** — a failing init script stops the container instead of running on with a
   broken state
 - ✅ **APT & dpkg optimisation** — no recommended/suggested packages, no translations, clean cache
-- ✅ **Continuously verified** — hadolint, shellcheck, 8 container integration tests, and weekly
+- ✅ **Continuously verified** — hadolint, shellcheck, 9 container integration tests, and weekly
   Trivy scans
 
 ---
@@ -145,7 +146,7 @@ period.
 
 Tags point at a multi-architecture manifest — Docker automatically selects the right image for
 the host platform. `YYYY.MM` tags (e.g. `2026.08`) are immutable monthly snapshots; prefer them
-for reproducible deployments, and `latest` for automatic security updates.
+for reproducible deployments, and `latest` to track the monthly rebuild.
 
 ### Included packages
 
@@ -223,7 +224,9 @@ docker run --rm \
 ```
 
 `appuser` is remapped and `/config` is re-owned **before** any service starts. Values must be
-positive integers; anything else stops the container with an explicit error.
+integers greater than or equal to `1`; anything else stops the container with an explicit error.
+`0` is refused on purpose — it is root's UID, and accepting it would silently turn `appuser` into
+a second root account.
 
 ### Build your own image
 
@@ -506,6 +509,7 @@ minimise what actually runs privileged:
 | World-writable files | Write bit removed image-wide at build time |
 | Default umask | `027` |
 | `/config` | Mode `750`, owned by `appuser` |
+| `PUID` / `PGID` | Validated at startup; `0` refused, so `appuser` cannot be remapped onto root |
 | Init failure | Stops the container (`S6_BEHAVIOUR_IF_STAGE2_FAILS=2`) |
 | Supply chain | Base image pinned by digest; s6 tarballs pinned by SHA256 and verified pre-extraction; CI actions pinned by commit SHA |
 
@@ -528,6 +532,22 @@ services:
 
 If you run with a **read-only root filesystem**, set `S6_READ_ONLY_ROOT=1` so s6-overlay writes
 its runtime state to `/run`.
+
+### Base image support status
+
+Ubuntu 18.04 LTS left standard support on **31 May 2023**. Its public archive no longer receives
+new security updates: those are published through Ubuntu Pro (ESM), which this image does not
+subscribe to. Two consequences worth stating plainly:
+
+- The monthly rebuild refreshes the image against what Ubuntu still serves for Bionic. It does
+  **not** bring in fixes that only exist behind ESM, so a CVE fixed for 20.04 or 22.04 may stay
+  open here indefinitely.
+- Trivy itself flags this on every scan (*"This OS version is no longer supported by the
+  distribution"*), and its results for Bionic are correspondingly incomplete.
+
+Use this image where an 18.04 userland is a hard requirement — legacy binaries, an old toolchain,
+reproducing a historical environment. For anything new, start from a supported Ubuntu LTS. If you
+must stay on 18.04 in production, add an Ubuntu Pro subscription inside your derived image.
 
 ### Verifying what you are running
 
@@ -577,8 +597,9 @@ An init script failed — this is `S6_BEHAVIOUR_IF_STAGE2_FAILS=2` doing its job
 show the failing script's error. Set `-e S6_VERBOSITY=2` for a more detailed startup trace.
 
 **`[init-adduser] PUID invalide`**
-`PUID` / `PGID` must be positive integers. Check for quoting mistakes or empty values in your
-`.env`.
+`PUID` / `PGID` must be integers ≥ `1`. `0` is rejected because it is root's UID. Check for
+quoting mistakes in your `.env`, and for a templated value built from an unset variable — those
+tend to arrive as a literal `0`. An unset `PUID` is fine: it falls back to the `1000` default.
 
 **A service never starts, no error shown**
 It is probably not registered. Check that an empty file named after it exists in
@@ -600,11 +621,14 @@ handling, or tune `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`.
 
 ## Maintenance
 
-- **Images are rebuilt monthly** (1st of the month, 03:00 UTC) with the latest Ubuntu security
-  updates, and can be triggered manually from the Actions tab.
-- **Vulnerabilities are scanned weekly** (Mondays, 04:00 UTC) and after every successful build,
-  with Trivy. Results go to the repository's **Security → Code scanning** tab; full JSON reports
-  are kept as build artifacts for 90 days.
+- **Images are rebuilt monthly** (1st of the month, 03:00 UTC) against the current Bionic
+  archive, and can be triggered manually from the Actions tab. See
+  [Base image support status](#base-image-support-status) for what that does and does not cover.
+- **Vulnerabilities are scanned weekly** (Mondays, 04:00 UTC) and after every build that published
+  an image, with Trivy. Full JSON reports are kept as build artifacts for 90 days, and every run
+  writes a summary table to its workflow page. Results also go to the repository's
+  **Security → Code scanning** tab, which requires code scanning to be enabled in
+  *Settings → Code security*; when it is not, the scan still runs and says so in its summary.
 - **The s6-overlay version and its checksums are pinned** in `Dockerfile-multi-arch` and updated
   manually — the procedure is in [`CONTRIBUTING.md`](./CONTRIBUTING.md#updating-s6-overlay).
 
@@ -666,7 +690,9 @@ un utilisateur non-root dont l'UID/GID est configurable à l'exécution, et un s
 puis vous laisse travailler.
 
 > **Architectures supportées :** `linux/amd64`, `linux/arm64`
-> **Reconstructions mensuelles automatiques** intégrant les derniers correctifs de sécurité Ubuntu.
+> **Reconstructions mensuelles automatiques** intégrant ce qu'Ubuntu publie encore pour Bionic —
+> lisez [État du support de l'image de base](#état-du-support-de-limage-de-base) avant tout
+> déploiement en production.
 
 ### Points forts
 
@@ -683,7 +709,7 @@ puis vous laisse travailler.
 - ✅ **Init fail-fast** — un script d'init en échec arrête le conteneur au lieu de le laisser
   tourner dans un état incohérent
 - ✅ **Optimisation APT & dpkg** — aucun paquet recommandé/suggéré, aucune traduction, cache propre
-- ✅ **Vérifiée en continu** — hadolint, shellcheck, 8 tests d'intégration sur conteneur, et scans
+- ✅ **Vérifiée en continu** — hadolint, shellcheck, 9 tests d'intégration sur conteneur, et scans
   Trivy hebdomadaires
 
 ---
@@ -727,7 +753,7 @@ arrêtés dans l'ordre des dépendances, puis les processus restants reçoivent 
 Les tags pointent vers un manifeste multi-architecture : Docker sélectionne automatiquement
 l'image correspondant à la plateforme hôte. Les tags `YYYY.MM` (par ex. `2026.08`) sont des
 instantanés mensuels immuables — préférez-les pour des déploiements reproductibles, et `latest`
-pour bénéficier automatiquement des mises à jour de sécurité.
+pour suivre la reconstruction mensuelle.
 
 ### Paquets inclus
 
@@ -806,8 +832,9 @@ docker run --rm \
 ```
 
 `appuser` est remappé et `/config` réattribué **avant** le démarrage de tout service. Les valeurs
-doivent être des entiers positifs ; toute autre valeur arrête le conteneur avec une erreur
-explicite.
+doivent être des entiers supérieurs ou égaux à `1` ; toute autre valeur arrête le conteneur avec
+une erreur explicite. `0` est refusé volontairement : c'est l'UID de root, et l'accepter ferait
+silencieusement d'`appuser` un second compte root.
 
 ### Construire votre propre image
 
@@ -1096,6 +1123,7 @@ au-dessus de cette couche est conçu pour réduire ce qui s'exécute réellement
 | Fichiers world-writable | Bit d'écriture retiré sur toute l'image au build |
 | Umask par défaut | `027` |
 | `/config` | Mode `750`, appartenant à `appuser` |
+| `PUID` / `PGID` | Validés au démarrage ; `0` refusé, `appuser` ne peut donc pas être remappé sur root |
 | Échec d'init | Arrête le conteneur (`S6_BEHAVIOUR_IF_STAGE2_FAILS=2`) |
 | Chaîne d'approvisionnement | Image de base figée par digest ; tarballs s6 figés par SHA256 et vérifiés avant extraction ; actions CI figées par SHA de commit |
 
@@ -1119,6 +1147,23 @@ services:
 
 Si vous utilisez un **système de fichiers racine en lecture seule**, définissez
 `S6_READ_ONLY_ROOT=1` pour que s6-overlay écrive son état d'exécution dans `/run`.
+
+### État du support de l'image de base
+
+Ubuntu 18.04 LTS est sorti du support standard le **31 mai 2023**. Son archive publique ne reçoit
+plus de nouvelles mises à jour de sécurité : celles-ci passent par Ubuntu Pro (ESM), auquel cette
+image n'est pas abonnée. Deux conséquences à énoncer clairement :
+
+- La reconstruction mensuelle rafraîchit l'image à partir de ce qu'Ubuntu sert encore pour Bionic.
+  Elle n'apporte **pas** les correctifs qui n'existent que derrière l'ESM : une CVE corrigée pour
+  20.04 ou 22.04 peut rester ouverte ici indéfiniment.
+- Trivy le signale à chaque analyse (*« This OS version is no longer supported by the
+  distribution »*), et ses résultats pour Bionic sont donc incomplets.
+
+Utilisez cette image là où un userland 18.04 est une contrainte dure — binaires hérités, ancienne
+chaîne de compilation, reproduction d'un environnement historique. Pour tout nouveau projet,
+partez d'une LTS Ubuntu encore supportée. Si vous devez rester sur 18.04 en production, ajoutez un
+abonnement Ubuntu Pro dans votre image dérivée.
 
 ### Vérifier ce que vous exécutez
 
@@ -1170,8 +1215,10 @@ Un script d'init a échoué — c'est `S6_BEHAVIOUR_IF_STAGE2_FAILS=2` qui joue 
 démarrage détaillée.
 
 **`[init-adduser] PUID invalide`**
-`PUID` / `PGID` doivent être des entiers positifs. Vérifiez les erreurs de quoting ou les valeurs
-vides dans votre `.env`.
+`PUID` / `PGID` doivent être des entiers ≥ `1`. `0` est refusé car c'est l'UID de root. Vérifiez
+les erreurs de quoting dans votre `.env`, ainsi que les valeurs construites depuis une variable
+non définie : elles arrivent souvent sous la forme d'un `0` littéral. Un `PUID` absent, lui, ne
+pose pas de problème : il retombe sur la valeur par défaut `1000`.
 
 **Un service ne démarre jamais, sans erreur affichée**
 Il n'est probablement pas enregistré. Vérifiez qu'un fichier vide à son nom existe dans
@@ -1194,11 +1241,16 @@ signaux du service, ou ajustez `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`.
 
 ## Maintenance
 
-- **Les images sont reconstruites chaque mois** (le 1er, à 03h00 UTC) avec les dernières mises à
-  jour de sécurité Ubuntu, et peuvent être déclenchées manuellement depuis l'onglet Actions.
+- **Les images sont reconstruites chaque mois** (le 1er, à 03h00 UTC) à partir de l'archive
+  Bionic courante, et peuvent être déclenchées manuellement depuis l'onglet Actions. Voir
+  [État du support de l'image de base](#état-du-support-de-limage-de-base) pour ce que cela
+  couvre — et ne couvre pas.
 - **Les vulnérabilités sont scannées chaque semaine** (lundi, 04h00 UTC) et après chaque build
-  réussi, avec Trivy. Les résultats sont dans l'onglet **Security → Code scanning** du dépôt ;
-  les rapports JSON complets sont conservés 90 jours en artefacts de build.
+  ayant publié une image, avec Trivy. Les rapports JSON complets sont conservés 90 jours en
+  artefacts de build, et chaque run écrit un tableau de synthèse sur sa page de workflow. Les
+  résultats vont aussi dans l'onglet **Security → Code scanning** du dépôt, ce qui suppose le
+  code scanning activé dans *Settings → Code security* ; sinon l'analyse tourne quand même et le
+  signale dans son résumé.
 - **La version de s6-overlay et ses empreintes sont figées** dans `Dockerfile-multi-arch` et mises
   à jour manuellement — la procédure est dans
   [`CONTRIBUTING.md`](./CONTRIBUTING.md#mettre-à-jour-s6-overlay).
