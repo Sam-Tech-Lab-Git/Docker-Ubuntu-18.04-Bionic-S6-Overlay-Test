@@ -66,6 +66,20 @@ Dependabot does not track them, so this is a manual procedure:
 - `build-multi-arch.yml` runs its **lint and integration-test jobs on every pull request**, so a PR that changes the Dockerfile, an s6 service or a workflow is fully checked before merge. It only **builds and pushes** on a push to `main` (path-filtered to `Dockerfile-multi-arch` and `root/**`), on the monthly schedule, or via manual dispatch — never from a pull request.
 - `vuln-scan.yml` scans the published image weekly, and after any build that actually published one — it isn't part of PR review either. It runs one matrixed job per architecture.
 
+## The Docker Hub description
+
+Docker Hub's overview is capped at **25 000 bytes**, and `README.md` is roughly twice that. The
+description published there is therefore a separate, condensed file, `README-dockerhub.md`:
+
+- It is what `build-multi-arch.yml` pushes to Docker Hub. `README.md` stays the reference
+  documentation on GitHub.
+- Docker Hub strips most raw HTML and does not resolve repository-relative links, so this file
+  uses plain Markdown and absolute GitHub URLs — keep it that way.
+- Both files must stay bilingual and must agree on facts. When you change tags, environment
+  variables, defaults or the security model, update both.
+- The lint job fails the build if the file exceeds the limit. It measures **bytes**, not
+  characters — accented text costs two bytes each in UTF-8.
+
 ## Style
 
 - Keep documentation bilingual (English section, then a parallel French section), matching the existing `README.md` and `SECURITY.md`.
@@ -143,6 +157,22 @@ Dependabot ne les suit pas : c'est donc une procédure manuelle.
 
 - `build-multi-arch.yml` exécute ses **jobs de lint et de tests d'intégration sur chaque pull request** : une PR modifiant le Dockerfile, un service s6 ou un workflow est donc entièrement vérifiée avant merge. Il ne **build et ne publie** que sur un push vers `main` (filtré sur `Dockerfile-multi-arch` et `root/**`), sur la planification mensuelle, ou via déclenchement manuel — jamais depuis une pull request.
 - `vuln-scan.yml` scanne l'image publiée chaque semaine, et après tout build en ayant réellement publié une — il ne fait pas non plus partie de la revue de PR. Il tourne en matrice, un job par architecture.
+
+### La description Docker Hub
+
+La description affichée sur Docker Hub est plafonnée à **25 000 octets**, et `README.md` en fait
+environ le double. Ce qui est publié là-bas est donc un fichier distinct et condensé,
+`README-dockerhub.md` :
+
+- C'est lui que `build-multi-arch.yml` pousse vers Docker Hub. `README.md` reste la documentation
+  de référence sur GitHub.
+- Docker Hub retire la plupart du HTML brut et ne résout pas les liens relatifs au dépôt : ce
+  fichier n'utilise donc que du Markdown simple et des URL GitHub absolues — conservez-le ainsi.
+- Les deux fichiers doivent rester bilingues et rester d'accord sur les faits. Quand vous modifiez
+  les tags, les variables d'environnement, les valeurs par défaut ou le modèle de sécurité,
+  mettez les deux à jour.
+- Le job de lint fait échouer le build si le fichier dépasse la limite. Il mesure des **octets**,
+  pas des caractères — un accent en coûte deux en UTF-8.
 
 ### Style
 

@@ -45,6 +45,22 @@ jobs:
           sudo apt-get install -y --no-install-recommends shellcheck
           shellcheck -s sh root/etc/s6-overlay/scripts/*
 
+      # Docker Hub refuse une description de plus de 25 000 octets. Sans ce
+      # test, le dépassement ne se voit qu'à la toute dernière étape d'une
+      # publication, une fois le build multi-arch terminé : l'image part,
+      # la description reste celle d'avant, et rien ne le signale ailleurs
+      # que dans les logs. On mesure en octets, pas en caractères — les
+      # accents comptent double en UTF-8.
+      - name: La description Docker Hub tient sous la limite
+        run: |
+          LIMIT=25000
+          SIZE=$(wc -c < README-dockerhub.md)
+          echo "README-dockerhub.md : ${SIZE} octets (limite ${LIMIT})"
+          if [ "${SIZE}" -gt "${LIMIT}" ]; then
+            echo "::error::README-dockerhub.md dépasse la limite Docker Hub de $((SIZE - LIMIT)) octets. Allégez-le, ou déplacez la section concernée vers README.md."
+            exit 1
+          fi
+
   test:
     name: Test d'intégration s6-overlay (amd64)
     needs: lint
@@ -268,4 +284,4 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: samtechlab/ubuntu-18.04-bionic-s6
-          readme-filepath: ./README.md
+          readme-filepath: ./README-dockerhub.md
