@@ -20,6 +20,12 @@ concurrency:
   group: build-multi-arch-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # GHCR exige un chemin en minuscules ; github.repository_owner ne l'est
+  # pas, d'où la valeur littérale.
+  GHCR_IMAGE: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6
+  DOCKERHUB_IMAGE: samtechlab/ubuntu-18.04-bionic-s6
+
 jobs:
   lint:
     name: Lint Dockerfile
@@ -257,31 +263,35 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
 
-      - name: Build and push multi-arch to Docker Hub
-        if: steps.dockerhub.outputs.available == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile-multi-arch
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            BUILD_DATE=${{ steps.version.outputs.build_date }}
-            REPO_URL=https://github.com/${{ github.repository }}
-            AUTHORS=Sam Tech Lab
-            TITLE=Ubuntu 18.04 (Bionic) Base - s6-overlay
-            DESCRIPTION=Image Ubuntu 18.04 légère, durcie et multi-architecture, avec s6-overlay comme PID 1
-            VERSION=18.04
-            LICENSES=MIT
-          tags: |
-            samtechlab/ubuntu-18.04-bionic-s6:latest
-            samtechlab/ubuntu-18.04-bionic-s6:${{ steps.version.outputs.tag }}
-          labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.vendor="Sam Tech Lab"
-            org.opencontainers.image.url="https://hub.docker.com/r/samtechlab/ubuntu-18.04-bionic-s6"
+      # Les tags des deux registres sont donnés à une seule construction.
+      # Docker Hub n'entre dans la liste que si ses secrets sont présents ;
+      # sans cela, buildx tenterait un push non authentifié et échouerait.
+      - name: Composer la liste des tags
+        id: tags
+        run: |
+          {
+            echo 'list<<TAGS_EOF'
+            echo "${GHCR_IMAGE}:latest"
+            echo "${GHCR_IMAGE}:${{ steps.version.outputs.tag }}"
+            if [ "${{ steps.dockerhub.outputs.available }}" = "true" ]; then
+              echo "${DOCKERHUB_IMAGE}:latest"
+              echo "${DOCKERHUB_IMAGE}:${{ steps.version.outputs.tag }}"
+            fi
+            echo 'TAGS_EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push multi-arch to GHCR
+      # Une seule construction pour les deux registres. Les deux étapes
+      # précédentes produisaient deux images distinctes : les couches
+      # étaient identiques grâce au cache, mais chacune portait un label
+      # `url` différent, donc une config différente, donc un digest
+      # différent. `docker pull` sur GHCR et sur Docker Hub ne rendait pas
+      # la même image, ce qui vide de son sens l'épinglage par digest que
+      # le README recommande.
+      #
+      # Conséquence assumée : `org.opencontainers.image.url` ne peut plus
+      # désigner un registre en particulier. Il pointe donc vers le dépôt,
+      # seule adresse valable pour les deux.
+      - name: Build and push multi-arch
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -296,13 +306,44 @@ jobs:
             DESCRIPTION=Image Ubuntu 18.04 légère, durcie et multi-architecture, avec s6-overlay comme PID 1
             VERSION=18.04
             LICENSES=MIT
-          tags: |
-            ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
-            ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:${{ steps.version.outputs.tag }}
+          tags: ${{ steps.tags.outputs.list }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.vendor="Sam Tech Lab"
-            org.opencontainers.image.url="https://ghcr.io/${{ github.repository_owner }}/ubuntu-18.04-bionic-s6"
+            org.opencontainers.image.url="https://github.com/${{ github.repository }}"
+
+      # Vérifie que ce qui vient d'être publié est bien un manifeste
+      # contenant les deux architectures, et que les registres servent le
+      # même digest — la propriété que la fusion ci-dessus vise à rétablir.
+      # Vérifie que ce qui vient d'être publié est bien un manifeste
+      # couvrant les deux architectures, et que tous les registres servent
+      # le même digest — la propriété que la fusion ci-dessus rétablit.
+      # Le digest est recalculé depuis le manifeste brut plutôt que lu via
+      # `--format`, qui irait chercher le blob de config sans raison.
+      - name: Le manifeste publié couvre les deux architectures
+        run: |
+          REF_DIGEST=""
+          for IMG in $(echo "${{ steps.tags.outputs.list }}" | grep ':latest$'); do
+            RAW=$(docker buildx imagetools inspect --raw "${IMG}")
+            ARCHES=$(echo "${RAW}" | jq -r '[.manifests[].platform.architecture] | unique | join(" ")')
+            DIGEST="sha256:$(printf '%s' "${RAW}" | sha256sum | cut -d' ' -f1)"
+            echo "${IMG}"
+            echo "  architectures : ${ARCHES}"
+            echo "  digest        : ${DIGEST}"
+            for WANT in amd64 arm64; do
+              if ! echo "${ARCHES}" | tr ' ' '\n' | grep -qx "${WANT}"; then
+                echo "::error::${IMG} ne contient pas d'image ${WANT}."
+                exit 1
+              fi
+            done
+            if [ -z "${REF_DIGEST}" ]; then
+              REF_DIGEST="${DIGEST}"
+            elif [ "${DIGEST}" != "${REF_DIGEST}" ]; then
+              echo "::error::Les registres ne servent pas le même digest (${REF_DIGEST} vs ${DIGEST})."
+              exit 1
+            fi
+          done
+          echo "Tous les registres servent ${REF_DIGEST}."
 
       - name: Sync README to Docker Hub
         if: steps.dockerhub.outputs.available == 'true'

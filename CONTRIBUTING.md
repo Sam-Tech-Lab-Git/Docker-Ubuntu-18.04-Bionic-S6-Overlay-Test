@@ -63,7 +63,8 @@ Dependabot does not track them, so this is a manual procedure:
 
 ## CI on pull requests
 
-- `build-multi-arch.yml` runs its **lint and integration-test jobs on every pull request**, so a PR that changes the Dockerfile, an s6 service or a workflow is fully checked before merge. It only **builds and pushes** on a push to `main` (path-filtered to `Dockerfile-multi-arch` and `root/**`), on the monthly schedule, or via manual dispatch — never from a pull request.
+- `build-multi-arch.yml` runs its **lint and integration-test jobs on every pull request**, so a PR that changes the Dockerfile, an s6 service or a workflow is fully checked before merge. The integration tests run as a matrix over **amd64 and arm64** — arm64 builds and runs under QEMU emulation, which costs roughly two extra minutes. Publishing waits on both. It only **builds and pushes** on a push to `main` (path-filtered to `Dockerfile-multi-arch` and `root/**`), on the monthly schedule, or via manual dispatch — never from a pull request.
+- Both registries are served by a **single build**, so they publish the same digest. Adding a tag means adding it to the `Composer la liste des tags` step, not adding a second build.
 - `vuln-scan.yml` scans the published image weekly, and after any build that actually published one — it isn't part of PR review either. It runs one matrixed job per architecture.
 
 ## The Docker Hub description
@@ -155,7 +156,8 @@ Dependabot ne les suit pas : c'est donc une procédure manuelle.
 
 ### CI sur les pull requests
 
-- `build-multi-arch.yml` exécute ses **jobs de lint et de tests d'intégration sur chaque pull request** : une PR modifiant le Dockerfile, un service s6 ou un workflow est donc entièrement vérifiée avant merge. Il ne **build et ne publie** que sur un push vers `main` (filtré sur `Dockerfile-multi-arch` et `root/**`), sur la planification mensuelle, ou via déclenchement manuel — jamais depuis une pull request.
+- `build-multi-arch.yml` exécute ses **jobs de lint et de tests d'intégration sur chaque pull request** : une PR modifiant le Dockerfile, un service s6 ou un workflow est donc entièrement vérifiée avant merge. Les tests d'intégration tournent en matrice sur **amd64 et arm64** — l'arm64 est construit et exécuté sous émulation QEMU, pour environ deux minutes de plus. La publication attend les deux. Il ne **build et ne publie** que sur un push vers `main` (filtré sur `Dockerfile-multi-arch` et `root/**`), sur la planification mensuelle, ou via déclenchement manuel — jamais depuis une pull request.
+- Les deux registres sont servis par un **build unique**, afin qu'ils publient le même digest. Ajouter un tag consiste à l'ajouter à l'étape `Composer la liste des tags`, pas à ajouter un second build.
 - `vuln-scan.yml` scanne l'image publiée chaque semaine, et après tout build en ayant réellement publié une — il ne fait pas non plus partie de la revue de PR. Il tourne en matrice, un job par architecture.
 
 ### La description Docker Hub
