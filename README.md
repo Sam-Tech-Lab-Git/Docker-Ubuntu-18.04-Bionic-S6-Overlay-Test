@@ -543,7 +543,10 @@ subscribe to. Two consequences worth stating plainly:
   **not** bring in fixes that only exist behind ESM, so a CVE fixed for 20.04 or 22.04 may stay
   open here indefinitely.
 - Trivy itself flags this on every scan (*"This OS version is no longer supported by the
-  distribution"*), and its results for Bionic are correspondingly incomplete.
+  distribution"*): Ubuntu no longer issues advisories for Bionic, so Trivy's data for it stops
+  where those advisories stopped. The scans deliberately report vulnerabilities that have **no
+  fix available** — on a frozen archive that is most of them, and filtering them out would leave
+  a reassuringly empty report.
 
 Use this image where an 18.04 userland is a hard requirement — legacy binaries, an old toolchain,
 reproducing a historical environment. For anything new, start from a supported Ubuntu LTS. If you
@@ -625,10 +628,12 @@ handling, or tune `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`.
   archive, and can be triggered manually from the Actions tab. See
   [Base image support status](#base-image-support-status) for what that does and does not cover.
 - **Vulnerabilities are scanned weekly** (Mondays, 04:00 UTC) and after every build that published
-  an image, with Trivy. Full JSON reports are kept as build artifacts for 90 days, and every run
-  writes a summary table to its workflow page. Results also go to the repository's
-  **Security → Code scanning** tab, which requires code scanning to be enabled in
-  *Settings → Code security*; when it is not, the scan still runs and says so in its summary.
+  an image, with Trivy, on both architectures. Findings with no fix available are included — see
+  [Base image support status](#base-image-support-status). Full JSON reports are kept as build
+  artifacts for 90 days, and every run writes a summary table to its workflow page. Results also
+  go to the repository's **Security → Code scanning** tab, which requires code scanning to be
+  enabled in *Settings → Code security*; when it is not, the scan still runs and says so in its
+  summary.
 - **The s6-overlay version and its checksums are pinned** in `Dockerfile-multi-arch` and updated
   manually — the procedure is in [`CONTRIBUTING.md`](./CONTRIBUTING.md#updating-s6-overlay).
 
@@ -1158,7 +1163,10 @@ image n'est pas abonnée. Deux conséquences à énoncer clairement :
   Elle n'apporte **pas** les correctifs qui n'existent que derrière l'ESM : une CVE corrigée pour
   20.04 ou 22.04 peut rester ouverte ici indéfiniment.
 - Trivy le signale à chaque analyse (*« This OS version is no longer supported by the
-  distribution »*), et ses résultats pour Bionic sont donc incomplets.
+  distribution »*) : Ubuntu ne publie plus d'avis de sécurité pour Bionic, et les données de Trivy
+  s'arrêtent donc là où ces avis se sont arrêtés. Les analyses remontent volontairement les
+  vulnérabilités **sans correctif disponible** — sur une archive figée, c'est la majorité d'entre
+  elles, et les filtrer laisserait un rapport vide et faussement rassurant.
 
 Utilisez cette image là où un userland 18.04 est une contrainte dure — binaires hérités, ancienne
 chaîne de compilation, reproduction d'un environnement historique. Pour tout nouveau projet,
@@ -1246,11 +1254,13 @@ signaux du service, ou ajustez `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`.
   [État du support de l'image de base](#état-du-support-de-limage-de-base) pour ce que cela
   couvre — et ne couvre pas.
 - **Les vulnérabilités sont scannées chaque semaine** (lundi, 04h00 UTC) et après chaque build
-  ayant publié une image, avec Trivy. Les rapports JSON complets sont conservés 90 jours en
-  artefacts de build, et chaque run écrit un tableau de synthèse sur sa page de workflow. Les
-  résultats vont aussi dans l'onglet **Security → Code scanning** du dépôt, ce qui suppose le
-  code scanning activé dans *Settings → Code security* ; sinon l'analyse tourne quand même et le
-  signale dans son résumé.
+  ayant publié une image, avec Trivy, sur les deux architectures. Les vulnérabilités sans
+  correctif disponible sont incluses — voir
+  [État du support de l'image de base](#état-du-support-de-limage-de-base). Les rapports JSON
+  complets sont conservés 90 jours en artefacts de build, et chaque run écrit un tableau de
+  synthèse sur sa page de workflow. Les résultats vont aussi dans l'onglet
+  **Security → Code scanning** du dépôt, ce qui suppose le code scanning activé dans
+  *Settings → Code security* ; sinon l'analyse tourne quand même et le signale dans son résumé.
 - **La version de s6-overlay et ses empreintes sont figées** dans `Dockerfile-multi-arch` et mises
   à jour manuellement — la procédure est dans
   [`CONTRIBUTING.md`](./CONTRIBUTING.md#mettre-à-jour-s6-overlay).

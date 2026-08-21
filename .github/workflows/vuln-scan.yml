@@ -14,137 +14,26 @@ concurrency:
   group: vuln-scan-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  IMAGE: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+
 jobs:
-  scan-amd64:
-    name: Scan amd64
+  scan:
+    name: Scan ${{ matrix.arch }}
     # Un build de PR ne publie rien : le relancer rescannerait le :latest
     # déjà analysé au build précédent. On ne suit donc que les builds qui
     # ont réellement pu pousser une image.
     if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
-    permissions:
-      actions: read
-      contents: read
-      security-events: write # GitHub Security SARIF upload
-
-    steps:
-      # Sans dépôt local, upload-sarif ne peut pas résoudre le commit et
-      # rattache les alertes à un SHA deviné.
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Compute version tag
-        id: version
-        run: |
-          TAG=$(date -u +'%Y.%m')
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-
-      - name: Pull amd64 image locally
-        run: docker pull --platform linux/amd64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
-
-      # Trivy scanne la copie présente dans le démon Docker local, sans
-      # qu'on lui indique la plateforme : c'est le `docker pull` ci-dessus
-      # qui détermine l'architecture réellement analysée. On l'affirme
-      # explicitement, faute de quoi une régression ferait analyser deux
-      # fois amd64 en le présentant comme une couverture multi-arch.
-      - name: Vérifier que l'image tirée est bien en amd64
-        run: |
-          ARCH=$(docker image inspect --format '{{.Architecture}}' \
-                   ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest)
-          echo "architecture de l'image = ${ARCH}"
-          test "${ARCH}" = "amd64"
-
-      - name: Scan image for vulnerabilities - SARIF (GitHub Security)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
-          format: sarif
-          output: trivy-results.sarif
-          exit-code: '0'
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH,MEDIUM
-
-      # L'onglet Security n'accepte un SARIF que si le code scanning est
-      # activé sur le dépôt (Settings → Code security). Quand il ne l'est
-      # pas, l'envoi échoue et faisait échouer toute l'analyse avec lui,
-      # alors que le rapport JSON et le résumé du run restent produits et
-      # exploitables. On signale l'envoi manqué sans perdre le reste.
-      - name: Upload SARIF to GitHub Security tab
-        id: sarif
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-results.sarif
-          category: trivy-amd64
-
-      - name: Signaler un envoi SARIF manqué
-        if: steps.sarif.outcome == 'failure'
-        run: |
-          echo "::warning::SARIF non publié dans l'onglet Security : activez le code scanning dans Settings → Code security. Le rapport JSON et le résumé de ce run restent disponibles."
-
-      - name: Scan image for vulnerabilities - JSON rapport complet
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
-          format: json
-          output: trivy-results.json
-          exit-code: '0'
-          ignore-unfixed: false
-          severity: CRITICAL,HIGH,MEDIUM,LOW
-
-      - name: Upload vulnerability report (JSON artifact)
-        uses: actions/upload-artifact@v7
-        with:
-          name: vulnerability-report-s6-amd64-${{ steps.version.outputs.tag }}
-          path: trivy-results.json
-          retention-days: 90
-
-      - name: Generate vulnerability step summary
-        run: |
-          echo "## 🔒 Rapport de vulnérabilités - amd64 - ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Image :** \`ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest\` - \`linux/amd64\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-results.json 2>/dev/null || echo 0)
-          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-results.json 2>/dev/null || echo 0)
-          MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' trivy-results.json 2>/dev/null || echo 0)
-          LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length' trivy-results.json 2>/dev/null || echo 0)
-          echo "### Résumé" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Sévérité | Nombre |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔴 CRITICAL | ${CRITICAL} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🟠 HIGH     | ${HIGH} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🟡 MEDIUM   | ${MEDIUM} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔵 LOW      | ${LOW} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${CRITICAL}" -gt 0 ] || [ "${HIGH}" -gt 0 ] || [ "${MEDIUM}" -gt 0 ] || [ "${LOW}" -gt 0 ]; then
-            echo "### 📋 Détail des vulnérabilités (CRITICAL, HIGH, MEDIUM, LOW)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "| Paquet | CVE | Sévérité | Version installée | Version corrigée | Description |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-----|----------|-------------------|------------------|-------------|" >> $GITHUB_STEP_SUMMARY
-            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH" or .Severity=="MEDIUM" or .Severity=="LOW") | "| \(.PkgName) | [\(.VulnerabilityID)](https://avd.aquasec.com/nvd/\(.VulnerabilityID | ascii_downcase)) | \(.Severity) | \(.InstalledVersion) | \(.FixedVersion // "N/A") | \(.Title // "") |"' trivy-results.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-          else
-            echo "✅ Aucune vulnérabilité détectée." >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> 📦 Le rapport JSON complet est disponible dans les artefacts du workflow (rétention 90 jours)." >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.sarif.outcome }}" = "success" ]; then
-            echo "> 🔍 Le rapport SARIF est visible dans l'onglet **Security → Code scanning** du dépôt GitHub." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "> ⚠️ Le rapport SARIF n'a pas pu être publié : le code scanning n'est pas activé sur ce dépôt (Settings → Code security)." >> $GITHUB_STEP_SUMMARY
-          fi
-
-  scan-arm64:
-    name: Scan arm64
-    # Un build de PR ne publie rien : le relancer rescannerait le :latest
-    # déjà analysé au build précédent. On ne suit donc que les builds qui
-    # ont réellement pu pousser une image.
-    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request') }}
-    runs-on: ubuntu-latest
+    # Marge dimensionnée sur l'arm64, qui installe QEMU en plus.
     timeout-minutes: 60
+
+    strategy:
+      # Une architecture en échec ne doit pas annuler l'analyse de l'autre :
+      # les deux rapports sont attendus à chaque run.
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
 
     permissions:
       actions: read
@@ -164,33 +53,38 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU for arm64 emulation
+        if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
-      - name: Pull arm64 image locally
-        run: docker pull --platform linux/arm64 ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+      - name: Pull ${{ matrix.arch }} image locally
+        run: docker pull --platform "linux/${{ matrix.arch }}" "${IMAGE}"
 
       # Trivy scanne la copie présente dans le démon Docker local, sans
       # qu'on lui indique la plateforme : c'est le `docker pull` ci-dessus
       # qui détermine l'architecture réellement analysée. On l'affirme
       # explicitement, faute de quoi une régression ferait analyser deux
       # fois amd64 en le présentant comme une couverture multi-arch.
-      - name: Vérifier que l'image tirée est bien en arm64
+      - name: Vérifier que l'image tirée est bien en ${{ matrix.arch }}
         run: |
-          ARCH=$(docker image inspect --format '{{.Architecture}}' \
-                   ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest)
+          ARCH=$(docker image inspect --format '{{.Architecture}}' "${IMAGE}")
           echo "architecture de l'image = ${ARCH}"
-          test "${ARCH}" = "arm64"
+          test "${ARCH}" = "${{ matrix.arch }}"
 
+      # ignore-unfixed reste à false, y compris pour le SARIF. Sur une
+      # distribution sortie du support, écarter ce qui n'a pas de correctif
+      # revient à masquer l'essentiel : Bionic ne recevant plus de mises à
+      # jour publiques, presque toute son exposition est « unfixed ». Un
+      # onglet Security vide laisserait croire à une image saine.
       - name: Scan image for vulnerabilities - SARIF (GitHub Security)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+          image-ref: ${{ env.IMAGE }}
           format: sarif
           output: trivy-results.sarif
           exit-code: '0'
-          ignore-unfixed: true
+          ignore-unfixed: false
           severity: CRITICAL,HIGH,MEDIUM
 
       # L'onglet Security n'accepte un SARIF que si le code scanning est
@@ -204,7 +98,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results.sarif
-          category: trivy-arm64
+          category: trivy-${{ matrix.arch }}
 
       - name: Signaler un envoi SARIF manqué
         if: steps.sarif.outcome == 'failure'
@@ -214,7 +108,7 @@ jobs:
       - name: Scan image for vulnerabilities - JSON rapport complet
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image-ref: ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest
+          image-ref: ${{ env.IMAGE }}
           format: json
           output: trivy-results.json
           exit-code: '0'
@@ -224,15 +118,15 @@ jobs:
       - name: Upload vulnerability report (JSON artifact)
         uses: actions/upload-artifact@v7
         with:
-          name: vulnerability-report-s6-arm64-${{ steps.version.outputs.tag }}
+          name: vulnerability-report-s6-${{ matrix.arch }}-${{ steps.version.outputs.tag }}
           path: trivy-results.json
           retention-days: 90
 
       - name: Generate vulnerability step summary
         run: |
-          echo "## 🔒 Rapport de vulnérabilités - arm64 - ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔒 Rapport de vulnérabilités - ${{ matrix.arch }} - ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Image :** \`ghcr.io/sam-tech-lab-git/ubuntu-18.04-bionic-s6:latest\` - \`linux/arm64\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image :** \`${IMAGE}\` - \`linux/${{ matrix.arch }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-results.json 2>/dev/null || echo 0)
           HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-results.json 2>/dev/null || echo 0)
@@ -258,6 +152,7 @@ jobs:
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "> 📦 Le rapport JSON complet est disponible dans les artefacts du workflow (rétention 90 jours)." >> $GITHUB_STEP_SUMMARY
+          echo "> ℹ️ Les vulnérabilités sans correctif disponible sont incluses : Bionic étant sorti du support, les écarter viderait le rapport de sa substance." >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.sarif.outcome }}" = "success" ]; then
             echo "> 🔍 Le rapport SARIF est visible dans l'onglet **Security → Code scanning** du dépôt GitHub." >> $GITHUB_STEP_SUMMARY
           else

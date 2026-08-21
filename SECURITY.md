@@ -71,6 +71,10 @@ The scan workflow runs:
 - automatically after every build workflow that published an image
 - manually through GitHub Actions if needed
 
+Both architectures are scanned. Vulnerabilities with **no fix available** are reported rather
+than filtered out: Bionic's archive is frozen, so most of its exposure has no fix, and hiding it
+would make the image look clean. Expect the reports to be long — that is the accurate picture.
+
 SARIF upload requires code scanning to be enabled under *Settings → Code security*. When it is
 not, the scan still runs: the JSON report and the run summary remain available, and the workflow
 records a warning instead of failing.
@@ -176,6 +180,11 @@ Le workflow d'analyse s'exécute :
 - chaque semaine, le lundi à **04h00 UTC**
 - automatiquement après chaque workflow de build ayant publié une image
 - manuellement via GitHub Actions si besoin
+
+Les deux architectures sont analysées. Les vulnérabilités **sans correctif disponible** sont
+remontées plutôt que filtrées : l'archive Bionic étant figée, l'essentiel de l'exposition n'a pas
+de correctif, et la masquer donnerait l'image d'un système sain. Les rapports sont donc longs —
+c'est le reflet fidèle de la situation.
 
 L'envoi du SARIF suppose le code scanning activé dans *Settings → Code security*. Sinon l'analyse
 tourne quand même : le rapport JSON et le résumé du run restent disponibles, et le workflow émet
