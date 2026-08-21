@@ -87,9 +87,9 @@ jobs:
         uses: actions/checkout@v7
 
       # L'arm64 est construit et exécuté sous émulation. Le surcoût est
-      # modeste — environ deux minutes de build — au regard de ce qu'il
-      # couvre : sans lui, la moitié de la matrice publiée n'aurait jamais
-      # vu un processus démarrer.
+      # modeste — deux à trois minutes de build, mesurées sur les runs
+      # existants — au regard de ce qu'il couvre : sans lui, la moitié de
+      # la matrice publiée n'aurait jamais vu un processus démarrer.
       - name: Set up QEMU (émulation arm64)
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v4
@@ -307,10 +307,14 @@ jobs:
             VERSION=18.04
             LICENSES=MIT
           tags: ${{ steps.tags.outputs.list }}
+          # Pas de guillemets autour des valeurs : chaque ligne est passée
+          # telle quelle à `--label`, et buildx découpe au premier `=` sans
+          # rien retirer. Des guillemets ici se retrouvent dans la valeur
+          # publiée.
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.vendor="Sam Tech Lab"
-            org.opencontainers.image.url="https://github.com/${{ github.repository }}"
+            org.opencontainers.image.vendor=Sam Tech Lab
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
 
       # Vérifie que ce qui vient d'être publié est bien un manifeste
       # contenant les deux architectures, et que les registres servent le
@@ -344,6 +348,21 @@ jobs:
             fi
           done
           echo "Tous les registres servent ${REF_DIGEST}."
+
+      # Les guillemets dans un bloc `labels:` ne sont pas des délimiteurs :
+      # ils finissent dans la valeur publiée. Le défaut est silencieux — il
+      # ne se voit qu'en inspectant l'image — d'où cette vérification, qui
+      # sert autant de garde-fou que de trace lisible dans les logs.
+      - name: Les labels OCI ne portent pas de guillemets parasites
+        run: |
+          docker pull -q "${GHCR_IMAGE}:latest"
+          LABELS=$(docker image inspect --format '{{json .Config.Labels}}' "${GHCR_IMAGE}:latest")
+          echo "${LABELS}" | jq .
+          if echo "${LABELS}" | jq -e 'to_entries[] | select(.value | test("^\"|\"$"))' >/dev/null; then
+            echo "::error::Au moins un label est publié avec des guillemets littéraux ; retirez-les du bloc labels:."
+            exit 1
+          fi
+          echo "Aucun label encadré de guillemets."
 
       - name: Sync README to Docker Hub
         if: steps.dockerhub.outputs.available == 'true'
