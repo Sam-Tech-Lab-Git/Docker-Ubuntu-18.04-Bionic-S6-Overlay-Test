@@ -138,6 +138,20 @@ jobs:
           test "${CODE}" -ne 0
           echo "${OUT}" | grep -q "PUID invalide"
 
+      # PUID=0 est un entier valide pour usermod, mais c'est root :
+      # l'accepter ferait d'appuser un second compte root, et le CMD par
+      # défaut s'exécuterait en root sans le moindre message.
+      - name: PUID=0 est refusé (appuser ne peut pas devenir root)
+        run: |
+          set +e
+          OUT=$(docker run --rm -e PUID=0 s6-test:ci sh -c 'echo DEMARRE' 2>&1)
+          CODE=$?
+          set -e
+          echo "sortie : ${OUT}"
+          echo "code de sortie = ${CODE}"
+          test "${CODE}" -ne 0
+          echo "${OUT}" | grep -q "PUID invalide"
+
   build-multi-arch:
     needs: test
     # Ne jamais publier depuis une PR.

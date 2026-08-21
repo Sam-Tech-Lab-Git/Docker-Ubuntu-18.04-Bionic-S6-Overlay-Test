@@ -27,6 +27,14 @@ PGID="${PGID:-1000}"
 # Valider que les valeurs sont bien des entiers : `usermod -u` avec une
 # valeur non numérique échouerait de façon peu lisible, et une valeur
 # vide remapperait silencieusement vers 0 (root) sur certains shells.
+#
+# 0 est rejeté explicitement : c'est un entier parfaitement valide pour
+# usermod, mais c'est l'UID/GID de root. Un `-e PUID=0` — faute de frappe,
+# ou valeur construite depuis une variable non définie côté orchestrateur
+# — ferait d'appuser un second compte root, et le CMD par défaut
+# `s6-setuidgid appuser` s'exécuterait alors en root sans qu'aucun
+# message ne le signale. C'est précisément le modèle non-root de l'image
+# qui tomberait, en silence.
 for pair in "PUID:${PUID}" "PGID:${PGID}"; do
     name="${pair%%:*}"
     value="${pair#*:}"
@@ -36,6 +44,10 @@ for pair in "PUID:${PUID}" "PGID:${PGID}"; do
             exit 1
             ;;
     esac
+    if [ "${value}" -eq 0 ]; then
+        echo "[init-adduser] ${name} invalide : '${value}' (0 = root, entier >= 1 attendu)" >&2
+        exit 1
+    fi
 done
 
 CUR_UID="$(id -u appuser)"
