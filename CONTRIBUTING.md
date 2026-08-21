@@ -45,7 +45,9 @@ Open an issue describing:
 ## Updating s6-overlay
 
 The s6-overlay version and its SHA256 checksums are pinned in `Dockerfile-multi-arch`.
-Dependabot does not track them, so this is a manual procedure:
+Dependabot does not track them — the version lives in an `ARG`, not a dependency manifest — so
+`s6-overlay-watch.yml` checks upstream every Monday and opens an issue when a newer release
+exists, carrying the three official checksums with it. Updating is then this manual procedure:
 
 1. Pick the target version from the [s6-overlay releases](https://github.com/just-containers/s6-overlay/releases).
 2. Fetch the official checksums for that version:
@@ -65,6 +67,8 @@ Dependabot does not track them, so this is a manual procedure:
 
 - `build-multi-arch.yml` runs its **lint and integration-test jobs on every pull request**, so a PR that changes the Dockerfile, an s6 service or a workflow is fully checked before merge. The integration tests run as a matrix over **amd64 and arm64** — arm64 builds and runs under QEMU emulation, which costs two to three extra minutes. Publishing waits on both. It only **builds and pushes** on a push to `main` (path-filtered to `Dockerfile-multi-arch` and `root/**`), on the monthly schedule, or via manual dispatch — never from a pull request.
 - Both registries are served by a **single build**, so they publish the same digest. Adding a tag means adding it to the `Composer la liste des tags` step, not adding a second build.
+- Images publish an **SBOM and a `mode=max` provenance attestation** alongside the manifest.
+  Inspect them with `docker buildx imagetools inspect <image> --format '{{json .SBOM}}'`.
 - Do **not** quote values in the `labels:` block. Each line is passed verbatim to `--label` and buildx splits on the first `=` without stripping anything, so quotes end up inside the published value. A post-publish step fails the build if any label carries them.
 - `vuln-scan.yml` scans the published image weekly, and after any build that actually published one — it isn't part of PR review either. It runs one matrixed job per architecture.
 
@@ -138,7 +142,10 @@ Ouvrez une issue en précisant :
 ### Mettre à jour s6-overlay
 
 La version de s6-overlay et ses empreintes SHA256 sont figées dans `Dockerfile-multi-arch`.
-Dependabot ne les suit pas : c'est donc une procédure manuelle.
+Dependabot ne les suit pas — la version est dans un `ARG`, pas dans un manifeste de dépendances —
+aussi `s6-overlay-watch.yml` interroge l'amont chaque lundi et ouvre une issue dès qu'une release
+plus récente existe, en y joignant les trois empreintes officielles. La mise à jour reste ensuite
+manuelle :
 
 1. Choisissez la version cible dans les [releases s6-overlay](https://github.com/just-containers/s6-overlay/releases).
 2. Récupérez les empreintes officielles de cette version :
@@ -159,6 +166,8 @@ Dependabot ne les suit pas : c'est donc une procédure manuelle.
 
 - `build-multi-arch.yml` exécute ses **jobs de lint et de tests d'intégration sur chaque pull request** : une PR modifiant le Dockerfile, un service s6 ou un workflow est donc entièrement vérifiée avant merge. Les tests d'intégration tournent en matrice sur **amd64 et arm64** — l'arm64 est construit et exécuté sous émulation QEMU, pour deux à trois minutes de plus. La publication attend les deux. Il ne **build et ne publie** que sur un push vers `main` (filtré sur `Dockerfile-multi-arch` et `root/**`), sur la planification mensuelle, ou via déclenchement manuel — jamais depuis une pull request.
 - Les deux registres sont servis par un **build unique**, afin qu'ils publient le même digest. Ajouter un tag consiste à l'ajouter à l'étape `Composer la liste des tags`, pas à ajouter un second build.
+- Les images publient un **SBOM et une attestation de provenance `mode=max`** à côté du manifeste.
+  Pour les consulter : `docker buildx imagetools inspect <image> --format '{{json .SBOM}}'`.
 - N'encadrez **pas** les valeurs du bloc `labels:` de guillemets. Chaque ligne est passée telle quelle à `--label`, et buildx découpe au premier `=` sans rien retirer : les guillemets se retrouvent dans la valeur publiée. Une étape post-publication fait échouer le build si un label en porte.
 - `vuln-scan.yml` scanne l'image publiée chaque semaine, et après tout build en ayant réellement publié une — il ne fait pas non plus partie de la revue de PR. Il tourne en matrice, un job par architecture.
 

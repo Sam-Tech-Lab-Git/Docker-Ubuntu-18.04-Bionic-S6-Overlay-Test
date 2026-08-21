@@ -1,0 +1,109 @@
+name: Veille s6-overlay
+
+# La version de s6-overlay est figée dans un ARG du Dockerfile, pas dans un
+# manifeste de dépendances : Dependabot ne la voit pas. Sans ce workflow, la
+# procédure décrite dans CONTRIBUTING.md ne se déclenche que si quelqu'un
+# pense à aller regarder les releases amont.
+on:
+  schedule:
+    - cron: "0 5 * * 1" # chaque lundi à 05h00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: s6-overlay-watch
+  cancel-in-progress: false
+
+jobs:
+  verifier:
+    name: Comparer la version figée à la dernière release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Comparer les versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ACTUELLE=$(grep -oP 'ARG S6_OVERLAY_VERSION=\K.*' Dockerfile-multi-arch)
+          if [ -z "${ACTUELLE}" ]; then
+            echo "::error::Version introuvable dans Dockerfile-multi-arch — le format de la ligne ARG a-t-il changé ?"
+            exit 1
+          fi
+
+          # Appel authentifié : les quotas anonymes de l'API sont vite atteints
+          # sur un runner partagé.
+          DERNIERE=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+                       https://api.github.com/repos/just-containers/s6-overlay/releases/latest \
+                     | jq -r '.tag_name // empty' | sed 's/^v//')
+          if ! printf '%s' "${DERNIERE}" | grep -qE '^[0-9]+(\.[0-9]+)+$'; then
+            echo "::error::Version amont inattendue : '${DERNIERE}'"
+            exit 1
+          fi
+
+          echo "figée dans le Dockerfile : ${ACTUELLE}"
+          echo "dernière release amont   : ${DERNIERE}"
+          echo "actuelle=${ACTUELLE}" >> "$GITHUB_OUTPUT"
+          echo "derniere=${DERNIERE}" >> "$GITHUB_OUTPUT"
+          if [ "${ACTUELLE}" = "${DERNIERE}" ]; then
+            echo "amaj=false" >> "$GITHUB_OUTPUT"
+            echo "À jour."
+          else
+            echo "amaj=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # L'issue embarque les trois empreintes officielles : la mise à jour se
+      # réduit alors à recopier quatre valeurs, ce qui est justement l'étape
+      # où l'on se trompe.
+      - name: Ouvrir une issue de mise à jour
+        if: steps.versions.outputs.amaj == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTUELLE: ${{ steps.versions.outputs.actuelle }}
+          V: ${{ steps.versions.outputs.derniere }}
+        run: |
+          set -euo pipefail
+          TITRE="s6-overlay ${V} est disponible"
+
+          # Comparaison exacte sur le titre plutôt qu'une recherche : pas de
+          # doublon si le workflow retourne la semaine suivante.
+          DEJA=$(gh issue list --state open --limit 100 --json title \
+                   --jq ".[] | select(.title == \"${TITRE}\") | .title" || true)
+          if [ -n "${DEJA}" ]; then
+            echo "Issue déjà ouverte, rien à faire."
+            exit 0
+          fi
+
+          {
+            echo "Version figée dans \`Dockerfile-multi-arch\` : **${ACTUELLE}**"
+            echo "Dernière release amont : **${V}**"
+            echo
+            echo "### Empreintes officielles de la v${V}"
+            echo
+            echo '```'
+            for f in noarch x86_64 aarch64; do
+              curl -fsSL "https://github.com/just-containers/s6-overlay/releases/download/v${V}/s6-overlay-${f}.tar.xz.sha256"
+            done
+            echo '```'
+            echo
+            echo "### À faire"
+            echo
+            echo "- [ ] \`S6_OVERLAY_VERSION\`, \`S6_SHA256_NOARCH\`, \`S6_SHA256_X86_64\` et \`S6_SHA256_AARCH64\` — **les quatre ensemble**"
+            echo "- [ ] badge s6-overlay dans \`README.md\`"
+            echo "- [ ] tableau « Paquets inclus » de \`README.md\` et \`README-dockerhub.md\`"
+            echo
+            echo "Procédure complète : [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md#mettre-à-jour-s6-overlay)."
+            echo
+            echo "<sub>Ouvert automatiquement par le workflow « Veille s6-overlay ».</sub>"
+          } > /tmp/corps.md
+
+          gh issue create --title "${TITRE}" --body-file /tmp/corps.md
