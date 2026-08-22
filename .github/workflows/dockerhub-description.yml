@@ -1,0 +1,91 @@
+name: Sync description Docker Hub
+
+# La synchronisation vivait dans le job de publication, lui-même filtré sur
+# `Dockerfile-multi-arch` et `root/**`. Conséquence : une modification du
+# seul README-dockerhub.md ne déclenchait aucun build, donc aucun sync — la
+# description ne se mettait à jour que si l'image était reconstruite pour
+# une autre raison. Le dépôt Bionic sans s6 a montré où cela mène : sa
+# description est restée figée sur une version périmée pendant des semaines.
+#
+# La sortir dans son propre workflow la déclenche sur le bon fichier, sans
+# republier l'image entière pour un changement de texte.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'README-dockerhub.md'
+  workflow_dispatch:
+
+concurrency:
+  group: dockerhub-description
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Publier la description
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Les identifiants Docker Hub sont-ils disponibles ?
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_USERNAME}" ] && [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secrets Docker Hub absents, synchronisation ignorée."
+          fi
+
+      # Docker Hub rejette une description de plus de 25 000 octets, et
+      # l'action ressort verte malgré le rejet. Le test existe aussi dans le
+      # job de lint, qui tourne sur les pull requests ; celui-ci garde le
+      # workflow autonome, puisqu'il peut être déclenché à la main.
+      - name: La description tient sous la limite
+        run: |
+          LIMIT=25000
+          SIZE=$(wc -c < README-dockerhub.md)
+          echo "README-dockerhub.md : ${SIZE} octets (limite ${LIMIT})"
+          if [ "${SIZE}" -gt "${LIMIT}" ]; then
+            echo "::error::README-dockerhub.md dépasse la limite Docker Hub de $((SIZE - LIMIT)) octets."
+            exit 1
+          fi
+
+      - name: Sync README to Docker Hub
+        if: steps.dockerhub.outputs.available == 'true'
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: samtechlab/ubuntu-18.04-bionic-s6
+          readme-filepath: ./README-dockerhub.md
+
+      # L'action ne signale pas un rejet côté Docker Hub. On relit donc la
+      # description publiée et on la compare au fichier : c'est la seule
+      # preuve que la synchronisation a réellement abouti.
+      - name: Vérifier que la description en ligne correspond au fichier
+        if: steps.dockerhub.outputs.available == 'true'
+        run: |
+          sleep 5
+          EN_LIGNE=$(curl -fsSL --max-time 40 \
+            "https://hub.docker.com/v2/repositories/samtechlab/ubuntu-18.04-bionic-s6/" \
+            | jq -r '.full_description // ""' | wc -c)
+          LOCAL=$(wc -c < README-dockerhub.md)
+          echo "publiée : ${EN_LIGNE} octets | fichier : ${LOCAL} octets"
+          # `jq -r` ajoute un saut de ligne final que wc compte : on tolère
+          # un octet d'écart plutôt que de comparer des chaînes entières.
+          DIFF=$(( EN_LIGNE > LOCAL ? EN_LIGNE - LOCAL : LOCAL - EN_LIGNE ))
+          if [ "${DIFF}" -gt 1 ]; then
+            echo "::error::La description en ligne ne correspond pas au fichier (écart de ${DIFF} octets)."
+            exit 1
+          fi
+          echo "Description à jour sur Docker Hub."
