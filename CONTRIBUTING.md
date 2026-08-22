@@ -77,8 +77,9 @@ exists, carrying the three official checksums with it. Updating is then this man
 Docker Hub's overview is capped at **25 000 bytes**, and `README.md` is roughly twice that. The
 description published there is therefore a separate, condensed file, `README-dockerhub.md`:
 
-- It is what `build-multi-arch.yml` pushes to Docker Hub. `README.md` stays the reference
-  documentation on GitHub.
+- It has its own workflow, `dockerhub-description.yml`, triggered when that file changes — a
+  documentation edit does not need an image rebuild to reach Docker Hub. `README.md` stays the
+  reference documentation on GitHub.
 - Docker Hub strips most raw HTML and does not resolve repository-relative links, so this file
   uses plain Markdown and absolute GitHub URLs — keep it that way.
 - Both files must stay bilingual and must agree on facts. When you change tags, environment
@@ -177,8 +178,9 @@ La description affichée sur Docker Hub est plafonnée à **25 000 octets**, et 
 environ le double. Ce qui est publié là-bas est donc un fichier distinct et condensé,
 `README-dockerhub.md` :
 
-- C'est lui que `build-multi-arch.yml` pousse vers Docker Hub. `README.md` reste la documentation
-  de référence sur GitHub.
+- Il a son propre workflow, `dockerhub-description.yml`, déclenché quand ce fichier change : une
+  modification de documentation n'a pas besoin d'une reconstruction d'image pour atteindre Docker
+  Hub. `README.md` reste la documentation de référence sur GitHub.
 - Docker Hub retire la plupart du HTML brut et ne résout pas les liens relatifs au dépôt : ce
   fichier n'utilise donc que du Markdown simple et des URL GitHub absolues — conservez-le ainsi.
 - Les deux fichiers doivent rester bilingues et rester d'accord sur les faits. Quand vous modifiez
